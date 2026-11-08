@@ -1,0 +1,168 @@
+"""Session state and turn orchestration for the virtual classroom."""
+
+import os
+import random
+import uuid
+from dataclasses import dataclass, field
+
+import anthropic
+
+from agents import (
+    AGENTS_BY_KEY,
+    CONNECTOR,
+    DEEP_DIVER,
+    JESTER,
+    POOL,
+    SIMPLIFIER,
+    STUDENT_DANI,
+    TEACHER,
+    VERIFIER_SYSTEM_PROMPT,
+)
+
+MODEL = os.environ.get("CLASSROOM_MODEL", "claude-sonnet-5-5")
+VERIFIER_MODEL = os.environ.get("CLASSROOM_VERIFIER_MODEL", "claude-haiku-5-5")
+MAX_VERIFY_RETRIES = 2
+JESTER_EVERY_MIN = 3
+JESTER_EVERY_MAX = 4
+HISTORY_WINDOW = 20
+
+_client = anthropic.Anthropic()
+
+
+@dataclass
+class ChatMessage:
+    agent_key: str
+    display_name: str
+    color: str
+    content: str
+
+
+@dataclass
+class Session:
+    id: str
+    topic: str
+    pool: list
+    history: list = field(default_factory=list)  # list[ChatMessage]
+    round_count: int = 0
+    next_jester_round: int = field(default_factory=lambda: random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX))
+    pool_turn_index: int = 0
+
+    def transcript_text(self):
+        lines = [f"נושא השיעור: {self.topic}"]
+        for m in self.history[-HISTORY_WINDOW:]:
+            lines.append(f"{m.display_name}: {m.content}")
+        return "\n".join(lines)
+
+
+SESSIONS = {}
+
+TECHNICAL_KEYWORDS = [
+    "מתמטיקה", "פיזיקה", "כימיה", "אלגברה", "חדו\"א", "נוסחה", "משוואה",
+    "קוד", "תכנות", "אלגוריתם", "ביולוגיה", "סטטיסטיקה",
+]
+NARRATIVE_KEYWORDS = [
+    "היסטוריה", "ערכים", "ספרות", "פילוסופיה", "חברה", "פסיכולוגיה", "אתיקה", "תנ\"ך",
+]
+
+
+def choose_pool(topic: str):
+    t = topic.lower()
+    if any(k in topic for k in TECHNICAL_KEYWORDS):
+        return [DEEP_DIVER, SIMPLIFIER]
+    if any(k in topic for k in NARRATIVE_KEYWORDS):
+        return [STUDENT_DANI, CONNECTOR]
+    return random.sample(POOL, 2)
+
+
+def create_session(topic: str, pool_keys: list | None = None) -> Session:
+    if pool_keys:
+        pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY and AGENTS_BY_KEY[k] in POOL]
+        if len(pool) != 2:
+            raise ValueError("pool_keys must name exactly 2 valid pool agents")
+    else:
+        pool = choose_pool(topic)
+    session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool)
+    SESSIONS[session.id] = session
+    return session
+
+
+def get_session(session_id: str) -> Session:
+    if session_id not in SESSIONS:
+        raise KeyError("session not found")
+    return SESSIONS[session_id]
+
+
+def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
+    user_content = (
+        f"{transcript}\n\n"
+        f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
+        f"{extra_instruction}"
+        "כתוב רק את התגובה שלך, בלי לציין את שמך."
+    )
+    response = _client.messages.create(
+        model=MODEL,
+        max_tokens=200,
+        system=agent.system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text").strip()
+
+
+def _verify_teacher_answer(topic: str, answer: str) -> tuple[bool, str]:
+    verify_prompt = f"נושא: {topic}\n\nתשובת המורה:\n{answer}"
+    response = _client.messages.create(
+        model=VERIFIER_MODEL,
+        max_tokens=100,
+        system=VERIFIER_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": verify_prompt}],
+    )
+    verdict = "".join(block.text for block in response.content if block.type == "text").strip()
+    if verdict.startswith("תקין"):
+        return True, ""
+    return False, verdict
+
+
+def _get_validated_teacher_reply(session: Session) -> str:
+    transcript = session.transcript_text()
+    answer = _call_agent(TEACHER, transcript)
+    for _ in range(MAX_VERIFY_RETRIES):
+        ok, reason = _verify_teacher_answer(session.topic, answer)
+        if ok:
+            return answer
+        answer = _call_agent(
+            TEACHER,
+            transcript,
+            extra_instruction=(
+                f"שים לב: הניסיון הקודם שלך הכיל טעות עובדתית ({reason}). "
+                "תקן אותה בתשובה הבאה. "
+            ),
+        )
+    return answer
+
+
+def handle_user_message(session: Session, user_text: str) -> list:
+    session.history.append(ChatMessage("user", "את/ה", "#111827", user_text))
+    session.round_count += 1
+
+    replies = []
+
+    teacher_text = _get_validated_teacher_reply(session)
+    teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
+    session.history.append(teacher_msg)
+    replies.append(teacher_msg)
+
+    pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
+    session.pool_turn_index += 1
+    pool_text = _call_agent(pool_agent, session.transcript_text())
+    pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
+    session.history.append(pool_msg)
+    replies.append(pool_msg)
+
+    if session.round_count >= session.next_jester_round:
+        jester_text = _call_agent(JESTER, session.transcript_text())
+        jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
+        session.history.append(jester_msg)
+        replies.append(jester_msg)
+        session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
+
+    return replies

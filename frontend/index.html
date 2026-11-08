@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>כיתה של סוכנים</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#f3f4f6; margin:0; display:flex; justify-content:center; }
+  #app { width:100%; max-width:720px; display:flex; flex-direction:column; height:100vh; background:#fff; }
+  #setup { padding:24px; display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
+  #setup input { padding:10px; font-size:16px; border:1px solid #d1d5db; border-radius:8px; }
+  #setup button { padding:10px; font-size:16px; border:none; border-radius:8px; background:#2563eb; color:#fff; cursor:pointer; }
+  #setup button:disabled { background:#93c5fd; cursor:not-allowed; }
+  #poolChoices { display:flex; flex-wrap:wrap; gap:10px; }
+  .pool-card { flex:1 1 45%; min-width:140px; border:2px solid #e5e7eb; border-radius:12px; padding:12px; cursor:pointer; display:flex; align-items:center; gap:10px; transition:border-color .15s; }
+  .pool-card.selected { border-color:#2563eb; background:#eff6ff; }
+  .pool-card.disabled { opacity:0.4; cursor:not-allowed; }
+  .avatar { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:14px; flex-shrink:0; }
+  .avatar.sm { width:28px; height:28px; font-size:12px; }
+  #chat { flex:1; overflow-y:auto; padding:16px; display:none; flex-direction:column; gap:10px; }
+  #inputBar { display:none; padding:12px; border-top:1px solid #e5e7eb; gap:8px; }
+  #inputBar input { flex:1; padding:10px; font-size:16px; border:1px solid #d1d5db; border-radius:8px; }
+  #inputBar button { padding:10px 16px; font-size:16px; border:none; border-radius:8px; background:#2563eb; color:#fff; cursor:pointer; }
+  .msg-row { display:flex; gap:8px; align-items:flex-end; }
+  .msg-row.user { flex-direction:row-reverse; }
+  .msg { max-width:75%; padding:10px 14px; border-radius:12px; line-height:1.4; }
+  .msg .name { font-size:12px; font-weight:600; margin-bottom:4px; opacity:0.85; }
+  .msg.user-bubble { background:#111827; color:#fff; }
+  .msg.agent { color:#fff; }
+  #topicBar { padding:8px 16px; font-size:13px; color:#6b7280; display:none; border-bottom:1px solid #e5e7eb; }
+  .hint { font-size:13px; color:#6b7280; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="setup">
+    <h2>כיתה של סוכנים</h2>
+    <p>איזה נושא תרצה ללמוד היום?</p>
+    <input id="topicInput" placeholder="למשל: אלגברה לינארית, מלחמת העולם הראשונה, פוטוסינתזה...">
+
+    <p class="hint">בחר ידנית 2 "תלמידים" שישתתפו בשיעור, או השאר לא-בחור ותן למערכת לבחור אוטומטית לפי הנושא:</p>
+    <div id="poolChoices"></div>
+
+    <button id="startBtn" onclick="startSession()">התחל שיעור</button>
+  </div>
+  <div id="topicBar"></div>
+  <div id="chat"></div>
+  <div id="inputBar">
+    <input id="messageInput" placeholder="כתוב כאן..." onkeydown="if(event.key==='Enter') sendMessage()">
+    <button onclick="sendMessage()">שלח</button>
+  </div>
+</div>
+
+<script>
+const API_BASE = "";
+let sessionId = null;
+let poolAgents = [];
+let selectedKeys = [];
+
+function initials(name) {
+  return name.replace(/^ה/, "").slice(0, 2);
+}
+
+function avatarEl(name, color, small) {
+  const span = document.createElement("div");
+  span.className = "avatar" + (small ? " sm" : "");
+  span.style.background = color;
+  span.textContent = initials(name);
+  return span;
+}
+
+async function loadAgents() {
+  const res = await fetch(API_BASE + "/api/agents");
+  const data = await res.json();
+  poolAgents = data.pool;
+  const container = document.getElementById("poolChoices");
+  container.innerHTML = "";
+  poolAgents.forEach(agent => {
+    const card = document.createElement("div");
+    card.className = "pool-card";
+    card.dataset.key = agent.key;
+    card.appendChild(avatarEl(agent.name, agent.color));
+    const label = document.createElement("span");
+    label.textContent = agent.name;
+    card.appendChild(label);
+    card.onclick = () => toggleAgent(agent.key, card);
+    container.appendChild(card);
+  });
+}
+
+function toggleAgent(key, card) {
+  const idx = selectedKeys.indexOf(key);
+  if (idx >= 0) {
+    selectedKeys.splice(idx, 1);
+    card.classList.remove("selected");
+  } else {
+    if (selectedKeys.length >= 2) return;
+    selectedKeys.push(key);
+    card.classList.add("selected");
+  }
+  document.querySelectorAll(".pool-card").forEach(c => {
+    const isSelected = selectedKeys.includes(c.dataset.key);
+    c.classList.toggle("disabled", selectedKeys.length >= 2 && !isSelected);
+  });
+}
+
+async function startSession() {
+  const topic = document.getElementById("topicInput").value.trim();
+  if (!topic) return;
+  const body = { topic };
+  if (selectedKeys.length === 2) body.pool_keys = selectedKeys;
+
+  const res = await fetch(API_BASE + "/api/session", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    alert("בחר בדיוק 2 תלמידים, או אל תבחר כלל (בחירה אוטומטית).");
+    return;
+  }
+  const data = await res.json();
+  sessionId = data.session_id;
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("chat").style.display = "flex";
+  document.getElementById("inputBar").style.display = "flex";
+  const topicBar = document.getElementById("topicBar");
+  topicBar.style.display = "block";
+  topicBar.textContent = `נושא: ${data.topic} · הרכב הכיתה: המורה, ${data.pool.map(a => a.name).join(", ")}`;
+}
+
+function addMessage(name, color, text, isUser) {
+  const chat = document.getElementById("chat");
+  const row = document.createElement("div");
+  row.className = "msg-row " + (isUser ? "user" : "");
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg " + (isUser ? "user-bubble" : "agent");
+  if (!isUser) bubble.style.background = color;
+  const nameDiv = document.createElement("div");
+  nameDiv.className = "name";
+  nameDiv.textContent = isUser ? "את/ה" : name;
+  const textDiv = document.createElement("div");
+  textDiv.textContent = text;
+  bubble.appendChild(nameDiv);
+  bubble.appendChild(textDiv);
+
+  row.appendChild(avatarEl(isUser ? "את/ה" : name, isUser ? "#374151" : color, true));
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function sendMessage() {
+  const input = document.getElementById("messageInput");
+  const text = input.value.trim();
+  if (!text || !sessionId) return;
+  addMessage(null, null, text, true);
+  input.value = "";
+
+  const res = await fetch(API_BASE + "/api/message", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({session_id: sessionId, text})
+  });
+  const data = await res.json();
+  for (const reply of data.replies) {
+    await new Promise(r => setTimeout(r, 400));
+    addMessage(reply.agent, reply.color, reply.text, false);
+  }
+}
+
+loadAgents();
+</script>
+</body>
+</html>

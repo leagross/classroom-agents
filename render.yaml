@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: classroom-agents
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLASSROOM_MODEL
+        value: claude-sonnet-5-5
+      - key: CLASSROOM_VERIFIER_MODEL
+        value: claude-haiku-5-5
