@@ -24,8 +24,13 @@ from agents import AGENTS_BY_KEY, POOL, TEACHER
 
 logger = logging.getLogger("slack_bot")
 
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
-SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
+
+print(
+    f"[slack_bot] loaded SLACK_BOT_TOKEN len={len(SLACK_BOT_TOKEN)} "
+    f"prefix={SLACK_BOT_TOKEN[:5]!r}; SLACK_SIGNING_SECRET len={len(SLACK_SIGNING_SECRET)}"
+)
 
 router = APIRouter()
 _slack_client = WebClient(token=SLACK_BOT_TOKEN) if SLACK_BOT_TOKEN else None
@@ -38,14 +43,27 @@ _SEEN_EVENT_IDS: set[str] = set()
 
 def _verify_slack_signature(timestamp: str, body: bytes, signature: str) -> bool:
     if not SLACK_SIGNING_SECRET:
+        print("[verify] REJECT: SLACK_SIGNING_SECRET is empty on the server")
         return False
-    if abs(time.time() - int(timestamp)) > 60 * 5:
+    try:
+        age = abs(time.time() - int(timestamp))
+    except ValueError:
+        print(f"[verify] REJECT: bad timestamp header {timestamp!r}")
+        return False
+    if age > 60 * 5:
+        print(f"[verify] REJECT: timestamp too old/skewed, age={age:.0f}s")
         return False
     basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
     computed = "v0=" + hmac.new(
         SLACK_SIGNING_SECRET.encode("utf-8"), basestring.encode("utf-8"), hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(computed, signature)
+    ok = hmac.compare_digest(computed, signature)
+    if not ok:
+        print(
+            f"[verify] REJECT: signature mismatch. computed_prefix={computed[:12]!r} "
+            f"received_prefix={(signature or '')[:12]!r} secret_len={len(SLACK_SIGNING_SECRET)}"
+        )
+    return ok
 
 
 def _post_as(agent, channel: str, text: str, thread_ts: str | None = None):
