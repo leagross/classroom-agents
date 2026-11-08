@@ -211,9 +211,70 @@
   }
 
   .hint { font-size: 13px; color: var(--muted); }
+
+  /* ---------- Settings (BYOK API key) ---------- */
+  #settingsBtn {
+    position: fixed; top: 14px; left: 14px;
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 1.5px solid var(--border); background: #fff;
+    cursor: pointer; font-size: 17px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    z-index: 20;
+  }
+  #settingsBtn.has-key { border-color: #16a34a; }
+
+  #settingsOverlay {
+    display: none;
+    position: fixed; inset: 0; background: rgba(17,24,39,.45);
+    align-items: center; justify-content: center; z-index: 30;
+    padding: 20px;
+  }
+  #settingsOverlay.open { display: flex; }
+  #settingsModal {
+    background: #fff; border-radius: var(--radius); padding: 24px;
+    max-width: 420px; width: 100%; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  #settingsModal h3 { margin: 0; }
+  #settingsModal p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  #settingsModal input {
+    padding: 12px 14px; font-size: 14px; border: 1.5px solid var(--border);
+    border-radius: 10px; outline: none; font-family: monospace;
+  }
+  #settingsModal .row { display: flex; gap: 8px; }
+  #settingsModal button {
+    padding: 10px 14px; font-size: 14px; border: none; border-radius: 10px;
+    cursor: pointer; font-weight: 600;
+  }
+  #saveKeyBtn { background: linear-gradient(90deg, #4f46e5, #7c3aed); color: #fff; flex: 1; }
+  #clearKeyBtn { background: #f3f4f6; color: #374151; }
+  #closeSettingsBtn { background: transparent; color: var(--muted); align-self: flex-end; padding: 4px 8px; }
+  .key-status { font-size: 12px; font-weight: 600; }
+  .key-status.set { color: #16a34a; }
+  .key-status.unset { color: var(--muted); }
 </style>
 </head>
 <body>
+<button id="settingsBtn" title="הגדרות / מפתח API אישי">⚙️</button>
+
+<div id="settingsOverlay">
+  <div id="settingsModal">
+    <button id="closeSettingsBtn" onclick="closeSettings()">✕</button>
+    <h3>מפתח API אישי (אופציונלי)</h3>
+    <p>
+      כברירת מחדל האפליקציה משתמשת במפתח ה-API שמוגדר בשרת. אפשר להזין כאן מפתח Anthropic (Claude) אישי במקום זאת —
+      הוא נשמר <b>רק בדפדפן שלך</b> (localStorage), נשלח לשרת רק כדי לבצע את הקריאה, ולעולם לא נשמר ב-DB או בלוגים.
+    </p>
+    <input id="apiKeyInput" type="password" placeholder="sk-ant-...">
+    <div class="row">
+      <button id="saveKeyBtn" onclick="saveApiKey()">שמור</button>
+      <button id="clearKeyBtn" onclick="clearApiKey()">מחק</button>
+    </div>
+    <span id="keyStatus" class="key-status unset">לא הוגדר מפתח אישי — משתמש במפתח השרת.</span>
+  </div>
+</div>
+
 <div id="app">
   <div id="setup">
     <h2>🎓 כיתה של סוכנים</h2>
@@ -239,6 +300,51 @@ const API_BASE = "";
 let sessionId = null;
 let poolAgents = [];
 let selectedKeys = [];
+
+/* ---------- Settings (BYOK API key, stored client-side only) ---------- */
+const API_KEY_STORAGE = "classroom_anthropic_api_key";
+
+function getStoredApiKey() {
+  return localStorage.getItem(API_KEY_STORAGE) || "";
+}
+
+function refreshSettingsUI() {
+  const key = getStoredApiKey();
+  const btn = document.getElementById("settingsBtn");
+  const status = document.getElementById("keyStatus");
+  if (key) {
+    btn.classList.add("has-key");
+    status.textContent = "✓ משתמש במפתח האישי שלך.";
+    status.className = "key-status set";
+    document.getElementById("apiKeyInput").value = key;
+  } else {
+    btn.classList.remove("has-key");
+    status.textContent = "לא הוגדר מפתח אישי — משתמש במפתח השרת.";
+    status.className = "key-status unset";
+    document.getElementById("apiKeyInput").value = "";
+  }
+}
+
+function openSettings() { document.getElementById("settingsOverlay").classList.add("open"); }
+function closeSettings() { document.getElementById("settingsOverlay").classList.remove("open"); }
+
+function saveApiKey() {
+  const val = document.getElementById("apiKeyInput").value.trim();
+  if (val) localStorage.setItem(API_KEY_STORAGE, val);
+  refreshSettingsUI();
+  closeSettings();
+}
+
+function clearApiKey() {
+  localStorage.removeItem(API_KEY_STORAGE);
+  refreshSettingsUI();
+}
+
+document.getElementById("settingsBtn").onclick = openSettings;
+document.getElementById("settingsOverlay").onclick = (e) => {
+  if (e.target.id === "settingsOverlay") closeSettings();
+};
+refreshSettingsUI();
 
 function initials(name) {
   return name.replace(/^ה/, "").slice(0, 2);
@@ -356,11 +462,26 @@ async function sendMessage() {
   addMessage(null, null, text, true);
   input.value = "";
 
+  const headers = {"Content-Type": "application/json"};
+  const apiKey = getStoredApiKey();
+  if (apiKey) headers["X-Anthropic-Key"] = apiKey;
+
   const res = await fetch(API_BASE + "/api/message", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers,
     body: JSON.stringify({session_id: sessionId, text})
   });
+
+  if (res.status === 401) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.detail || "מפתח ה-API האישי שהזנת לא תקין. בדוק אותו בהגדרות (⚙️).");
+    return;
+  }
+  if (!res.ok) {
+    alert("משהו השתבש בשליחת ההודעה. נסה שוב.");
+    return;
+  }
+
   const data = await res.json();
   for (const reply of data.replies) {
     const typingRow = addTyping(reply.agent, reply.color);

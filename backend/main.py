@@ -2,7 +2,8 @@
 
 import os
 
-from fastapi import FastAPI, HTTPException
+import anthropic
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -55,13 +56,19 @@ def create_session(req: CreateSessionRequest):
 
 
 @app.post("/api/message")
-def send_message(req: MessageRequest):
+def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(default=None)):
     try:
         session = orchestrator.get_session(req.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
-    replies = orchestrator.handle_user_message(session, req.text)
+    try:
+        replies = orchestrator.handle_user_message(session, req.text, api_key=x_anthropic_key)
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
     return {
         "replies": [
             {"agent": m.display_name, "key": m.agent_key, "color": m.color, "text": m.content}

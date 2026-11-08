@@ -27,8 +27,17 @@ JESTER_EVERY_MIN = 3
 JESTER_EVERY_MAX = 4
 HISTORY_WINDOW = 20
 
-_client = anthropic.Anthropic()
+_default_client = anthropic.Anthropic()
 db.init_db()
+
+
+def _get_client(api_key: str | None) -> anthropic.Anthropic:
+    """Use the caller-supplied key (BYOK from the browser/localStorage) if given,
+    otherwise fall back to the server's own ANTHROPIC_API_KEY. The user key is
+    never logged, persisted to the DB, or kept beyond this one request/client."""
+    if api_key:
+        return anthropic.Anthropic(api_key=api_key)
+    return _default_client
 
 
 @dataclass
@@ -125,14 +134,14 @@ AGENT_MAX_TOKENS = 1024
 VERIFIER_MAX_TOKENS = 300
 
 
-def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
+def _call_agent(agent, transcript: str, extra_instruction: str = "", api_key: str | None = None) -> str:
     user_content = (
         f"{transcript}\n\n"
         f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
         f"{extra_instruction}"
         "כתוב רק את התגובה שלך, בלי לציין את שמך."
     )
-    response = _client.messages.create(
+    response = _get_client(api_key).messages.create(
         model=MODEL,
         max_tokens=AGENT_MAX_TOKENS,
         system=agent.system_prompt,
@@ -151,9 +160,9 @@ def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
     return text
 
 
-def _verify_teacher_answer(topic: str, answer: str) -> tuple[bool, str]:
+def _verify_teacher_answer(topic: str, answer: str, api_key: str | None = None) -> tuple[bool, str]:
     verify_prompt = f"נושא: {topic}\n\nתשובת המורה:\n{answer}"
-    response = _client.messages.create(
+    response = _get_client(api_key).messages.create(
         model=VERIFIER_MODEL,
         max_tokens=VERIFIER_MAX_TOKENS,
         system=VERIFIER_SYSTEM_PROMPT,
@@ -166,11 +175,11 @@ def _verify_teacher_answer(topic: str, answer: str) -> tuple[bool, str]:
     return False, verdict
 
 
-def _get_validated_teacher_reply(session: Session) -> str:
+def _get_validated_teacher_reply(session: Session, api_key: str | None = None) -> str:
     transcript = session.transcript_text()
-    answer = _call_agent(TEACHER, transcript)
+    answer = _call_agent(TEACHER, transcript, api_key=api_key)
     for _ in range(MAX_VERIFY_RETRIES):
-        ok, reason = _verify_teacher_answer(session.topic, answer)
+        ok, reason = _verify_teacher_answer(session.topic, answer, api_key=api_key)
         if ok:
             return answer
         answer = _call_agent(
@@ -180,6 +189,7 @@ def _get_validated_teacher_reply(session: Session) -> str:
                 f"שים לב: הניסיון הקודם שלך הכיל טעות עובדתית ({reason}). "
                 "תקן אותה בתשובה הבאה. "
             ),
+            api_key=api_key,
         )
     return answer
 
@@ -189,26 +199,26 @@ def _remember(session: Session, msg: ChatMessage):
     db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
 
 
-def handle_user_message(session: Session, user_text: str) -> list:
+def handle_user_message(session: Session, user_text: str, api_key: str | None = None) -> list:
     _remember(session, ChatMessage("user", "את/ה", "#111827", user_text))
     session.round_count += 1
 
     replies = []
 
-    teacher_text = _get_validated_teacher_reply(session)
+    teacher_text = _get_validated_teacher_reply(session, api_key=api_key)
     teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
     _remember(session, teacher_msg)
     replies.append(teacher_msg)
 
     pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
     session.pool_turn_index += 1
-    pool_text = _call_agent(pool_agent, session.transcript_text())
+    pool_text = _call_agent(pool_agent, session.transcript_text(), api_key=api_key)
     pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
     _remember(session, pool_msg)
     replies.append(pool_msg)
 
     if session.round_count >= session.next_jester_round:
-        jester_text = _call_agent(JESTER, session.transcript_text())
+        jester_text = _call_agent(JESTER, session.transcript_text(), api_key=api_key)
         jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
         _remember(session, jester_msg)
         replies.append(jester_msg)
