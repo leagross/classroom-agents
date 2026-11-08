@@ -26,7 +26,7 @@
 
 אפשר ליצור מפתח ב-[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
 
-**חריג — Slack:** למשתמשי Slack אין דפדפן לשמור בו מפתח אישי, אז `slack_bot.py` משתמש במפתח ייעודי נפרד, `SLACK_ANTHROPIC_API_KEY`, שמוגדר פעם אחת בסביבת השרת (ראו "אינטגרציית Slack" למטה). זה מפתח נפרד ומכוון לגמרי מכל מה שצ'אט הווב משתמש בו.
+**גם ב-Slack:** אין שם מפתח משותף/כללי לבוט — כל משתמש ב-Slack מגדיר את המפתח האישי שלו בעצמו עם הפקודה `/classroom-key sk-ant-...` (נשמר בזיכרון השרת בלבד, לא ב-DB). ראו "אינטגרציית Slack" למטה.
 
 ## הפעלה מקומית
 
@@ -74,7 +74,7 @@ frontend/
 1. היכנס ל-https://render.com והתחבר עם GitHub.
 2. New → Blueprint → בחר את ה-repo `classroom-agents`.
 3. Render יזהה את `render.yaml` ויציע ליצור שירות `classroom-agents` בתוכנית Free.
-4. אין צורך להזין מפתח API כללי — הצ'אט בווב לא משתמש בכזה (BYOK בלבד). אם תרצה גם Slack, תצטרך להזין את `SLACK_ANTHROPIC_API_KEY` (ראו "אינטגרציית Slack" למטה).
+4. אין צורך להזין שום מפתח API כללי — גם הווב וגם Slack עובדים ב-BYOK בלבד, כל משתמש מכניס את המפתח שלו (ראו "אינטגרציית Slack" למטה).
 5. אשר את ה-Deploy. בתוך כמה דקות תקבל כתובת ציבורית כמו `https://classroom-agents.onrender.com`.
 
 הערה: בתוכנית החינמית השירות "נרדם" אחרי זמן ללא תנועה, והבקשה הראשונה אחרי שינה עלולה לקחת כ-30-60 שניות.
@@ -89,10 +89,9 @@ frontend/
 3. **OAuth & Permissions** → תחת **Bot Token Scopes** הוסף: `chat:write`, `commands`, `channels:history` (ולערוצים פרטיים גם `groups:history`), ו-`im:history` אם תרצה גם ב-DM.
 4. **Install App to Workspace**, ואז העתק את ה-**Bot User OAuth Token** (מתחיל ב-`xoxb-...`).
 5. **Basic Information** → **App Credentials** → העתק את ה-**Signing Secret**.
-6. **Slash Commands** → **Create New Command**:
-   - Command: `/classroom`
-   - Request URL: `https://<הכתובת-שלך-ב-Render>/slack/commands`
-   - Description: "התחל שיעור חדש"
+6. **Slash Commands** → **Create New Command** (צריך ליצור **שתיים**):
+   - Command: `/classroom`, Request URL: `https://<הכתובת-שלך-ב-Render>/slack/commands`, Description: "התחל שיעור חדש"
+   - Command: `/classroom-key`, Request URL: `https://<הכתובת-שלך-ב-Render>/slack/commands`, Description: "הגדר מפתח API אישי"
 7. **Event Subscriptions** → הפעל (Enable Events):
    - Request URL: `https://<הכתובת-שלך-ב-Render>/slack/events` (Slack ישלח אימות אוטומטי — ה-endpoint כבר תומך בזה).
    - תחת **Subscribe to bot events** הוסף: `message.channels` (ולפי הצורך גם `message.groups`, `message.im`, `app_mention`).
@@ -101,10 +100,10 @@ frontend/
 ### משתני סביבה נדרשים
 - `SLACK_BOT_TOKEN` — ה-`xoxb-...` משלב 4.
 - `SLACK_SIGNING_SECRET` — משלב 5.
-- `SLACK_ANTHROPIC_API_KEY` — מפתח Anthropic ייעודי לבוט (נפרד לגמרי מה-BYOK של צ'אט הווב, כי משתמשי Slack אין להם דפדפן לשמור בו מפתח אישי).
 
-מוגדרים ב-`render.yaml` עם `sync: false`, כך שצריך להזין אותם ידנית בממשק Render (Environment).
+מוגדרים ב-`render.yaml` עם `sync: false`, כך שצריך להזין אותם ידנית בממשק Render (Environment). **אין** משתנה מפתח API משותף ל-Slack — בדיוק כמו באתר, כל משתמש ב-Slack מכניס מפתח אישי משלו (ראו למטה).
 
 ### שימוש
-- `/classroom <נושא>` בערוץ — מתחיל שיעור חדש (בוחר אוטומטית הרכב מאגר לפי הנושא).
-- כל הודעה רגילה בערוץ לאחר מכן נחשבת כשאלה/תשובה של המשתמש, וכל דמות עונה בהודעה נפרדת.
+1. `/classroom-key sk-ant-...` — **כל משתמש** שרוצה להשתתף מגדיר פעם אחת את מפתח ה-Anthropic האישי שלו (נשמר רק בזיכרון הזמני של השרת, לא ב-DB; נמחק בכל ריסטרט, בדיוק כמו מחיקת localStorage בדפדפן).
+2. `/classroom <נושא>` בערוץ — מתחיל שיעור חדש (בוחר אוטומטית הרכב מאגר לפי הנושא).
+3. כל הודעה רגילה בערוץ לאחר מכן נחשבת כשאלה/תשובה של המשתמש ששלח אותה — ונעשית עם **המפתח האישי שלו**. משתמש שלא הגדיר מפתח יקבל בקשה לעשות זאת לפני שהבוט יענה לו.

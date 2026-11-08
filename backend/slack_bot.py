@@ -26,10 +26,6 @@ logger = logging.getLogger("slack_bot")
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
-# Slack users have no browser to hold a personal key in, so the Slack integration
-# is the one place that still uses a server-side key — but a dedicated one, kept
-# separate from the (now BYOK-only) web chat, which never falls back to a shared key.
-SLACK_ANTHROPIC_API_KEY = os.environ.get("SLACK_ANTHROPIC_API_KEY", "").strip()
 
 print(
     f"[slack_bot] loaded SLACK_BOT_TOKEN len={len(SLACK_BOT_TOKEN)} "
@@ -43,6 +39,12 @@ _slack_client = WebClient(token=SLACK_BOT_TOKEN) if SLACK_BOT_TOKEN else None
 CHANNEL_SESSIONS: dict[str, str] = {}
 # Avoid double-handling retried Slack events (Slack retries on slow/failed acks).
 _SEEN_EVENT_IDS: set[str] = set()
+
+# slack_user_id -> personal Anthropic API key, set via /classroom-key.
+# Same BYOK policy as the web chat: in-memory only for this one process,
+# never written to the DB or logged. Lost on every restart/deploy, same as
+# the web chat's localStorage is lost if the user clears their browser.
+USER_KEYS: dict[str, str] = {}
 
 
 def _verify_slack_signature(timestamp: str, body: bytes, signature: str) -> bool:
@@ -100,7 +102,7 @@ def _start_lesson(channel: str, topic: str, thread_ts: str | None = None):
         )
 
 
-def _handle_user_text(channel: str, text: str, thread_ts: str | None = None):
+def _handle_user_text(channel: str, user_id: str, text: str, thread_ts: str | None = None):
     session_id = CHANNEL_SESSIONS.get(channel)
     if not session_id:
         if _slack_client:
@@ -116,19 +118,34 @@ def _handle_user_text(channel: str, text: str, thread_ts: str | None = None):
         CHANNEL_SESSIONS.pop(channel, None)
         return
 
-    if not SLACK_ANTHROPIC_API_KEY:
+    api_key = USER_KEYS.get(user_id)
+    if not api_key:
         if _slack_client:
             _slack_client.chat_postMessage(
                 channel=channel,
-                text="⚠️ הבוט לא מוגדר עם מפתח API (חסר SLACK_ANTHROPIC_API_KEY בשרת).",
+                text=(
+                    f"<@{user_id}> צריך קודם להגדיר מפתח API אישי: שלח לי "
+                    f"`/classroom-key sk-ant-...` (מפתח אישי מ-console.anthropic.com/settings/keys)."
+                ),
                 thread_ts=thread_ts,
             )
         return
 
     try:
-        replies = orchestrator.handle_user_message(session, text, api_key=SLACK_ANTHROPIC_API_KEY)
+        replies = orchestrator.handle_user_message(session, text, api_key=api_key)
     except orchestrator.MissingApiKeyError:
         return  # already handled above
+    except Exception as e:
+        # Covers an invalid/revoked key (anthropic.AuthenticationError etc.) without
+        # crashing the whole event handler.
+        logger.error("handle_user_message failed: %s", e)
+        if _slack_client:
+            _slack_client.chat_postMessage(
+                channel=channel,
+                text=f"<@{user_id}> המפתח האישי שלך לא תקין. עדכן אותו עם `/classroom-key sk-ant-...`.",
+                thread_ts=thread_ts,
+            )
+        return
     for msg in replies:
         agent = AGENTS_BY_KEY.get(msg.agent_key, TEACHER)
         _post_as(agent, channel, msg.content, thread_ts=thread_ts)
@@ -145,12 +162,25 @@ async def slack_commands(request: Request, x_slack_request_timestamp: str = Head
     command = form.get("command", "")
     text = (form.get("text") or "").strip()
     channel = form.get("channel_id")
+    user_id = form.get("user_id")
 
     if command == "/classroom":
         if not text:
             return {"response_type": "ephemeral", "text": "שימוש: /classroom <נושא השיעור>"}
         _start_lesson(channel, text)
         return {"response_type": "in_channel", "text": f"מתחיל שיעור על: {text}"}
+
+    if command == "/classroom-key":
+        if not text:
+            return {
+                "response_type": "ephemeral",
+                "text": "שימוש: /classroom-key sk-ant-... (המפתח שלך, לא נשמר בשום מקום חוץ מהזיכרון הזמני של השרת).",
+            }
+        USER_KEYS[user_id] = text.strip()
+        return {
+            "response_type": "ephemeral",
+            "text": "✓ המפתח האישי שלך נשמר (רק בזיכרון השרת, לא ב-DB). אפשר להתחיל לשאול שאלות בערוץ.",
+        }
 
     return {"response_type": "ephemeral", "text": "פקודה לא מוכרת."}
 
@@ -183,8 +213,9 @@ async def slack_events(request: Request, x_slack_request_timestamp: str = Header
             return {"ok": True}  # ignore the bot's own messages
         channel = event.get("channel")
         text = event.get("text", "")
+        user_id = event.get("user")
         thread_ts = event.get("thread_ts")
-        if channel and text:
-            _handle_user_text(channel, text, thread_ts=thread_ts)
+        if channel and text and user_id:
+            _handle_user_text(channel, user_id, text, thread_ts=thread_ts)
 
     return {"ok": True}
