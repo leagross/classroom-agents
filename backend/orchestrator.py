@@ -92,6 +92,10 @@ def get_session(session_id: str) -> Session:
     return SESSIONS[session_id]
 
 
+AGENT_MAX_TOKENS = 500
+VERIFIER_MAX_TOKENS = 200
+
+
 def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
     user_content = (
         f"{transcript}\n\n"
@@ -101,23 +105,29 @@ def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
     )
     response = _client.messages.create(
         model=MODEL,
-        max_tokens=200,
+        max_tokens=AGENT_MAX_TOKENS,
         system=agent.system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
-    return "".join(block.text for block in response.content if block.type == "text").strip()
+    text = "".join(block.text for block in response.content if block.type == "text").strip()
+    if not text:
+        # Defensive fallback: an empty reply (e.g. truncated generation) must never
+        # be fed back into the transcript, since that poisons later turns.
+        text = "(לא הצלחתי לנסח תגובה הפעם, נסה לנסח את השאלה מעט אחרת.)"
+    return text
 
 
 def _verify_teacher_answer(topic: str, answer: str) -> tuple[bool, str]:
     verify_prompt = f"נושא: {topic}\n\nתשובת המורה:\n{answer}"
     response = _client.messages.create(
         model=VERIFIER_MODEL,
-        max_tokens=100,
+        max_tokens=VERIFIER_MAX_TOKENS,
         system=VERIFIER_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": verify_prompt}],
     )
     verdict = "".join(block.text for block in response.content if block.type == "text").strip()
-    if verdict.startswith("תקין"):
+    if not verdict or verdict.startswith("תקין"):
+        # Treat an empty/unparseable verdict as "pass" rather than looping forever.
         return True, ""
     return False, verdict
 
