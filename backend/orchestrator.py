@@ -92,8 +92,8 @@ def get_session(session_id: str) -> Session:
     return SESSIONS[session_id]
 
 
-AGENT_MAX_TOKENS = 500
-VERIFIER_MAX_TOKENS = 200
+AGENT_MAX_TOKENS = 1024
+VERIFIER_MAX_TOKENS = 300
 
 
 def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
@@ -109,7 +109,12 @@ def _call_agent(agent, transcript: str, extra_instruction: str = "") -> str:
         system=agent.system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+    block_types = [b.type for b in response.content]
     text = "".join(block.text for block in response.content if block.type == "text").strip()
+    print(
+        f"[_call_agent] agent={agent.key} stop_reason={response.stop_reason} "
+        f"blocks={block_types} usage={response.usage} text_len={len(text)}"
+    )
     if not text:
         # Defensive fallback: an empty reply (e.g. truncated generation) must never
         # be fed back into the transcript, since that poisons later turns.
