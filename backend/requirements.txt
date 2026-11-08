@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 anthropic
 pydantic
+slack_sdk
+python-multipart

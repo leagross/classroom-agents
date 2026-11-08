@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import orchestrator
+import slack_bot
 from agents import POOL, TEACHER
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
@@ -68,5 +69,7 @@ def send_message(req: MessageRequest):
         ]
     }
 
+
+app.include_router(slack_bot.router)
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

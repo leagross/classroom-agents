@@ -36,6 +36,7 @@ backend/
   agents.py        # הגדרות הדמויות (system prompts)
   orchestrator.py  # state machine: בחירת מאגר, אימות מורה, סדר תגובות
   main.py          # FastAPI, מגיש גם את ה-frontend
+  slack_bot.py      # אינטגרציית Slack (אופציונלי)
 frontend/
   index.html       # צ'אט ווניל JS
 ```
@@ -56,3 +57,32 @@ frontend/
 5. אשר את ה-Deploy. בתוך כמה דקות תקבל כתובת ציבורית כמו `https://classroom-agents.onrender.com`.
 
 הערה: בתוכנית החינמית השירות "נרדם" אחרי זמן ללא תנועה, והבקשה הראשונה אחרי שינה עלולה לקחת כ-30-60 שניות.
+
+## אינטגרציית Slack (אופציונלי)
+
+ניתן לדבר עם הכיתה גם מתוך ערוץ Slack, בנוסף (או במקום) לאתר. כל ערוץ/DM מנהל שיעור אחד בכל פעם; כל דמות מפרסמת הודעה נפרדת עם שם ואימוג'י משלה.
+
+### יצירת Slack App
+1. היכנס ל-https://api.slack.com/apps → **Create New App** → **From scratch**.
+2. בחר שם (למשל "כיתה של סוכנים") ואת ה-workspace שלך.
+3. **OAuth & Permissions** → תחת **Bot Token Scopes** הוסף: `chat:write`, `commands`, `channels:history` (ולערוצים פרטיים גם `groups:history`), ו-`im:history` אם תרצה גם ב-DM.
+4. **Install App to Workspace**, ואז העתק את ה-**Bot User OAuth Token** (מתחיל ב-`xoxb-...`).
+5. **Basic Information** → **App Credentials** → העתק את ה-**Signing Secret**.
+6. **Slash Commands** → **Create New Command**:
+   - Command: `/classroom`
+   - Request URL: `https://<הכתובת-שלך-ב-Render>/slack/commands`
+   - Description: "התחל שיעור חדש"
+7. **Event Subscriptions** → הפעל (Enable Events):
+   - Request URL: `https://<הכתובת-שלך-ב-Render>/slack/events` (Slack ישלח אימות אוטומטי — ה-endpoint כבר תומך בזה).
+   - תחת **Subscribe to bot events** הוסף: `message.channels` (ולפי הצורך גם `message.groups`, `message.im`, `app_mention`).
+8. הוסף את הבוט לערוץ הרצוי (`/invite @שם-הבוט`).
+
+### משתני סביבה נדרשים
+- `SLACK_BOT_TOKEN` — ה-`xoxb-...` משלב 4.
+- `SLACK_SIGNING_SECRET` — משלב 5.
+
+מוגדרים ב-`render.yaml` עם `sync: false`, כך שצריך להזין אותם ידנית בממשק Render (Environment).
+
+### שימוש
+- `/classroom <נושא>` בערוץ — מתחיל שיעור חדש (בוחר אוטומטית הרכב מאגר לפי הנושא).
+- כל הודעה רגילה בערוץ לאחר מכן נחשבת כשאלה/תשובה של המשתמש, וכל דמות עונה בהודעה נפרדת.

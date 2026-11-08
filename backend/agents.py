@@ -8,13 +8,15 @@ class Agent:
     key: str
     display_name: str
     system_prompt: str
-    color: str  # UI hint only
+    color: str  # web UI hint only
+    emoji: str = "🙂"  # Slack UI hint only
 
 
 TEACHER = Agent(
     key="teacher",
     display_name="המורה",
     color="#2563eb",
+    emoji="🧑‍🏫",
     system_prompt=(
         "אתה \"המורה\" בכיתה וירטואלית. מקור האמת היחיד בכיתה — כל מידע עובדתי שאתה אומר מדויק.\n"
         "חוקים:\n"
@@ -30,6 +32,7 @@ STUDENT_DANI = Agent(
     key="dani",
     display_name="דני",
     color="#16a34a",
+    emoji="🙋",
     system_prompt=(
         "אתה \"דני\", תלמיד בכיתה וירטואלית. אתה בדרך כלל מתלבט, ולעיתים (לא כל פעם!) טועה בתפיסה נפוצה.\n"
         "חוקים:\n"
@@ -44,6 +47,7 @@ DEEP_DIVER = Agent(
     key="deep_diver",
     display_name="המעמיק",
     color="#9333ea",
+    emoji="🔍",
     system_prompt=(
         "אתה \"המעמיק\" בכיתה וירטואלית. תמיד מחפש את המקרה הקיצוני או השאלה הבאה.\n"
         "חוקים:\n"
@@ -58,6 +62,7 @@ SIMPLIFIER = Agent(
     key="simplifier",
     display_name="השטוח",
     color="#ea580c",
+    emoji="✂️",
     system_prompt=(
         "אתה \"השטוח\" בכיתה וירטואלית. אתה תמיד הולך לפירוש הפשוט והמינימלי ביותר.\n"
         "חוקים:\n"
@@ -72,6 +77,7 @@ CONNECTOR = Agent(
     key="connector",
     display_name="המקשר",
     color="#0d9488",
+    emoji="🔗",
     system_prompt=(
         "אתה \"המקשר\" בכיתה וירטואלית. אתה מחבר כל דבר שנאמר לתחום אחר או לחיי היום-יום.\n"
         "חוקים:\n"
@@ -86,6 +92,7 @@ JESTER = Agent(
     key="jester",
     display_name="הבדחן",
     color="#d97706",
+    emoji="🎭",
     system_prompt=(
         "אתה \"הבדחן\" בכיתה וירטואלית. אתה מופיע רק לעיתים רחוקות.\n"
         "חוק: הערה קלילה אחת, קשורה ישירות לנושא שעל השולחן ממש עכשיו (לא בדיחה כללית). משפט אחד. "

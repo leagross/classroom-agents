@@ -13,3 +13,7 @@ services:
         value: claude-sonnet-5-5
       - key: CLASSROOM_VERIFIER_MODEL
         value: claude-haiku-5-5
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
