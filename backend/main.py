@@ -64,6 +64,11 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
 
     try:
         replies = orchestrator.handle_user_message(session, req.text, api_key=x_anthropic_key)
+    except orchestrator.MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
     except anthropic.AuthenticationError:
         raise HTTPException(
             status_code=401,

@@ -26,6 +26,10 @@ logger = logging.getLogger("slack_bot")
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
+# Slack users have no browser to hold a personal key in, so the Slack integration
+# is the one place that still uses a server-side key — but a dedicated one, kept
+# separate from the (now BYOK-only) web chat, which never falls back to a shared key.
+SLACK_ANTHROPIC_API_KEY = os.environ.get("SLACK_ANTHROPIC_API_KEY", "").strip()
 
 print(
     f"[slack_bot] loaded SLACK_BOT_TOKEN len={len(SLACK_BOT_TOKEN)} "
@@ -112,7 +116,19 @@ def _handle_user_text(channel: str, text: str, thread_ts: str | None = None):
         CHANNEL_SESSIONS.pop(channel, None)
         return
 
-    replies = orchestrator.handle_user_message(session, text)
+    if not SLACK_ANTHROPIC_API_KEY:
+        if _slack_client:
+            _slack_client.chat_postMessage(
+                channel=channel,
+                text="⚠️ הבוט לא מוגדר עם מפתח API (חסר SLACK_ANTHROPIC_API_KEY בשרת).",
+                thread_ts=thread_ts,
+            )
+        return
+
+    try:
+        replies = orchestrator.handle_user_message(session, text, api_key=SLACK_ANTHROPIC_API_KEY)
+    except orchestrator.MissingApiKeyError:
+        return  # already handled above
     for msg in replies:
         agent = AGENTS_BY_KEY.get(msg.agent_key, TEACHER)
         _post_as(agent, channel, msg.content, thread_ts=thread_ts)

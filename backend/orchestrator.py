@@ -27,17 +27,23 @@ JESTER_EVERY_MIN = 3
 JESTER_EVERY_MAX = 4
 HISTORY_WINDOW = 20
 
-_default_client = anthropic.Anthropic()
 db.init_db()
 
 
 def _get_client(api_key: str | None) -> anthropic.Anthropic:
-    """Use the caller-supplied key (BYOK from the browser/localStorage) if given,
-    otherwise fall back to the server's own ANTHROPIC_API_KEY. The user key is
-    never logged, persisted to the DB, or kept beyond this one request/client."""
-    if api_key:
-        return anthropic.Anthropic(api_key=api_key)
-    return _default_client
+    """Every caller must bring its own Anthropic API key — there is no shared
+    server-side key for the web chat. (The Slack integration is the one
+    exception: it has no browser to hold a per-user key, so it supplies its
+    own dedicated SLACK_ANTHROPIC_API_KEY explicitly — see slack_bot.py.)
+    The key is used to build a one-off client for this call only; it is never
+    logged, cached, or persisted to the DB."""
+    if not api_key:
+        raise MissingApiKeyError("No Anthropic API key was provided for this request.")
+    return anthropic.Anthropic(api_key=api_key)
+
+
+class MissingApiKeyError(Exception):
+    pass
 
 
 @dataclass

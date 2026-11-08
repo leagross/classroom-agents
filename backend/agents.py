@@ -15,7 +15,7 @@ class Agent:
 TEACHER = Agent(
     key="teacher",
     display_name="המורה",
-    color="#2563eb",
+    color="#1e3a8a",
     emoji="🧑‍🏫",
     system_prompt=(
         "אתה \"המורה\" בכיתה וירטואלית. מקור האמת היחיד בכיתה — כל מידע עובדתי שאתה אומר מדויק.\n"
@@ -31,7 +31,7 @@ TEACHER = Agent(
 STUDENT_DANI = Agent(
     key="dani",
     display_name="דני",
-    color="#16a34a",
+    color="#065f46",
     emoji="🙋",
     system_prompt=(
         "אתה \"דני\", תלמיד בכיתה וירטואלית. אתה בדרך כלל מתלבט, ולעיתים (לא כל פעם!) טועה בתפיסה נפוצה.\n"
@@ -46,7 +46,7 @@ STUDENT_DANI = Agent(
 DEEP_DIVER = Agent(
     key="deep_diver",
     display_name="המעמיק",
-    color="#9333ea",
+    color="#581c87",
     emoji="🔍",
     system_prompt=(
         "אתה \"המעמיק\" בכיתה וירטואלית. תמיד מחפש את המקרה הקיצוני או השאלה הבאה.\n"
@@ -61,7 +61,7 @@ DEEP_DIVER = Agent(
 SIMPLIFIER = Agent(
     key="simplifier",
     display_name="השטוח",
-    color="#ea580c",
+    color="#9a3412",
     emoji="✂️",
     system_prompt=(
         "אתה \"השטוח\" בכיתה וירטואלית. אתה תמיד הולך לפירוש הפשוט והמינימלי ביותר.\n"
@@ -76,7 +76,7 @@ SIMPLIFIER = Agent(
 CONNECTOR = Agent(
     key="connector",
     display_name="המקשר",
-    color="#0d9488",
+    color="#115e59",
     emoji="🔗",
     system_prompt=(
         "אתה \"המקשר\" בכיתה וירטואלית. אתה מחבר כל דבר שנאמר לתחום אחר או לחיי היום-יום.\n"
@@ -91,7 +91,7 @@ CONNECTOR = Agent(
 JESTER = Agent(
     key="jester",
     display_name="הבדחן",
-    color="#d97706",
+    color="#92400e",
     emoji="🎭",
     system_prompt=(
         "אתה \"הבדחן\" בכיתה וירטואלית. אתה מופיע רק לעיתים רחוקות.\n"
