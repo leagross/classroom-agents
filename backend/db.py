@@ -48,6 +48,15 @@ _SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_messages_lesson_id ON messages(lesson_id)",
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        email TEXT PRIMARY KEY,
+        name TEXT,
+        picture TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_login_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 
@@ -118,6 +127,27 @@ def load_lesson(lesson_id: str):
             {"id": lesson_id},
         ).mappings().first()
         return dict(row) if row else None
+
+
+def upsert_user(email: str, name: str | None, picture: str | None):
+    """Record of who has signed in — identity only. Never stores the user's
+    Anthropic API key (that stays browser-only, per the app's BYOK policy)."""
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO users (email, name, picture)
+                VALUES (:email, :name, :picture)
+                ON CONFLICT (email) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    picture = EXCLUDED.picture,
+                    last_login_at = now()
+                """
+            ),
+            {"email": email, "name": name, "picture": picture},
+        )
 
 
 def load_messages(lesson_id: str):

@@ -1,13 +1,16 @@
 """FastAPI backend for the virtual classroom of agents."""
 
 import os
+import secrets
 
 import anthropic
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
+import auth
 import orchestrator
 import slack_bot
 from agents import POOL, TEACHER
@@ -22,6 +25,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# SESSION_SECRET should be set explicitly in production (Render env var) so
+# login sessions survive restarts/deploys; falling back to a random secret
+# here only affects local dev, where losing login state on restart is fine.
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET") or secrets.token_hex(32))
 
 
 class CreateSessionRequest(BaseModel):
@@ -83,5 +91,6 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
 
 
 app.include_router(slack_bot.router)
+app.include_router(auth.router)
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

@@ -6,3 +6,5 @@ slack_sdk
 python-multipart
 sqlalchemy
 psycopg2-binary
+authlib
+itsdangerous

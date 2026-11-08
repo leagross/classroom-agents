@@ -28,6 +28,24 @@
 
 **גם ב-Slack:** אין שם מפתח משותף/כללי לבוט — כל משתמש ב-Slack מגדיר את המפתח האישי שלו בעצמו עם הפקודה `/classroom-key sk-ant-...` (נשמר בזיכרון השרת בלבד, לא ב-DB). ראו "אינטגרציית Slack" למטה.
 
+## כניסת משתמשים (Google Login)
+
+כפתור **"התחברות עם Google"** (למעלה-ימין) מאפשר למשתמש להתחבר עם חשבון Google ולראות את השם/תמונה שלו באתר. זו **זהות בלבד** — לא קשורה למפתח ה-API (שממשיך להיות תמיד בדפדפן, גם למשתמש מחובר וגם לאורח). אם ההתחברות לא מוגדרת בשרת (חסרים המשתנים למטה), הכפתור פשוט לא מופיע והאתר ממשיך לעבוד כרגיל בלי צורך בהתחברות.
+
+### הגדרה ב-Google Cloud Console
+1. גלוש ל-https://console.cloud.google.com/apis/credentials וצור פרויקט (אם אין לך).
+2. **OAuth consent screen** → הגדר אפליקציה (External, אם זה לא Workspace פנימי) עם שם ואימייל תמיכה.
+3. **Credentials** → **Create Credentials** → **OAuth client ID** → Application type: **Web application**.
+4. תחת **Authorized redirect URIs** הוסף: `https://<הכתובת-שלך-ב-Render>/auth/google/callback`
+5. אחרי היצירה תקבל **Client ID** ו-**Client Secret**.
+
+### משתני סביבה נדרשים
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SESSION_SECRET` — נוצר אוטומטית על ידי `render.yaml` (`generateValue: true`), אין צורך להזין ידנית.
+
+את שני משתני ה-Google יש להזין ידנית ב-Render (Environment), בדיוק כמו משתני ה-Slack.
+
 ## הפעלה מקומית
 
 ```bash

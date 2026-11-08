@@ -9,18 +9,18 @@
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-0: #0b0d12;
-    --bg-1: #12151c;
-    --surface: #171b24;
-    --surface-2: #1d222d;
-    --ink: #f3f1ea;
-    --muted: #9aa0ad;
-    --border: rgba(255, 255, 255, 0.08);
-    --gold: #d4af37;
-    --gold-soft: #e9d08e;
-    --gold-ink: #1b1a14;
+    --bg-0: #eef1fb;
+    --bg-1: #f6f7fd;
+    --surface: #ffffff;
+    --surface-2: #f5f6fc;
+    --ink: #1f2430;
+    --muted: #6b7280;
+    --border: #e6e8f2;
+    --p1: #4f46e5;   /* indigo */
+    --p2: #9333ea;   /* violet */
+    --p-ink: #ffffff;
     --radius: 18px;
-    --shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.6);
+    --shadow: 0 20px 45px -22px rgba(79, 70, 229, 0.35);
   }
 
   * { box-sizing: border-box; }
@@ -28,8 +28,8 @@
   body {
     font-family: "Assistant", system-ui, sans-serif;
     background:
-      radial-gradient(circle at 15% -10%, rgba(212, 175, 55, 0.08) 0%, transparent 40%),
-      radial-gradient(circle at 100% 110%, rgba(212, 175, 55, 0.05) 0%, transparent 45%),
+      radial-gradient(circle at 10% -10%, rgba(79, 70, 229, 0.12) 0%, transparent 40%),
+      radial-gradient(circle at 100% 110%, rgba(147, 51, 234, 0.1) 0%, transparent 45%),
       linear-gradient(180deg, var(--bg-0), var(--bg-1));
     color: var(--ink);
     margin: 0;
@@ -62,7 +62,7 @@
     font-family: "Playfair Display", serif;
     font-size: 30px;
     font-weight: 700;
-    background: linear-gradient(90deg, var(--gold-soft), var(--gold));
+    background: linear-gradient(90deg, var(--p1), var(--p2));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -80,10 +80,10 @@
     color: var(--ink);
     transition: border-color .15s, box-shadow .15s;
   }
-  #setup input::placeholder { color: #6b7280; }
+  #setup input::placeholder { color: #9ca3af; }
   #setup input:focus {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.15);
+    border-color: var(--p1);
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
   }
   #setup button#startBtn {
     padding: 15px;
@@ -91,8 +91,8 @@
     font-weight: 700;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(90deg, var(--gold), var(--gold-soft));
-    color: var(--gold-ink);
+    background: linear-gradient(90deg, var(--p1), var(--p2));
+    color: var(--p-ink);
     cursor: pointer;
     transition: transform .1s, filter .15s;
     letter-spacing: .2px;
@@ -100,7 +100,7 @@
   #setup button#startBtn:hover { filter: brightness(1.07); }
   #setup button#startBtn:active { transform: scale(0.98); }
   #setup button#startBtn:disabled {
-    background: #3a3d45; color: #7a7f8a; cursor: not-allowed; filter: none;
+    background: #d1d5db; color: #9ca3af; cursor: not-allowed; filter: none;
   }
 
   #poolChoices { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -117,18 +117,17 @@
     background: var(--surface-2);
     transition: border-color .15s, background .15s, transform .1s;
   }
-  .pool-card:hover { transform: translateY(-1px); border-color: rgba(212,175,55,.4); }
-  .pool-card.selected { border-color: var(--gold); background: rgba(212, 175, 55, 0.08); }
+  .pool-card:hover { transform: translateY(-1px); border-color: rgba(147, 51, 234, .4); }
+  .pool-card.selected { border-color: var(--p2); background: rgba(147, 51, 234, 0.06); }
   .pool-card.disabled { opacity: .35; cursor: not-allowed; }
   .pool-card span { color: var(--ink); }
 
   .avatar {
     width: 38px; height: 38px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 700; color: var(--gold-soft);
+    font-size: 16px; font-weight: 700; color: #fff;
     flex-shrink: 0;
-    border: 1.5px solid rgba(212, 175, 55, 0.5);
-    box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    box-shadow: 0 2px 10px rgba(79, 70, 229, 0.25);
   }
   .avatar.sm { width: 32px; height: 32px; font-size: 13px; }
 
@@ -150,7 +149,7 @@
     flex-direction: column;
     gap: 14px;
     background:
-      radial-gradient(circle at 50% 0%, rgba(212,175,55,.04), transparent 60%),
+      radial-gradient(circle at 50% 0%, rgba(147,51,234,.05), transparent 60%),
       var(--bg-1);
   }
 
@@ -167,26 +166,26 @@
     border-radius: 16px;
     line-height: 1.5;
     font-size: 15px;
-    box-shadow: 0 6px 18px rgba(0,0,0,.25);
-    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.12);
   }
-  .msg .name { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: var(--gold-soft); }
+  .msg .name { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
   .msg.user-bubble {
-    background: linear-gradient(135deg, #23262f, #1a1d24);
-    color: var(--ink);
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    color: #fff;
     border-bottom-right-radius: 4px;
   }
-  .msg.agent { color: #f6f4ee; border-bottom-left-radius: 4px; }
-  .msg.agent .name { color: rgba(255,255,255,.85); }
+  .msg.user-bubble .name { color: rgba(255,255,255,.85); }
+  .msg.agent { color: #fff; border-bottom-left-radius: 4px; }
+  .msg.agent .name { color: rgba(255,255,255,.9); }
 
   .typing-row { display: flex; gap: 8px; align-items: flex-end; }
   .typing-bubble {
     padding: 13px 17px; border-radius: 16px; border-bottom-left-radius: 4px;
     display: flex; gap: 4px; align-items: center;
-    box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.12);
   }
   .typing-bubble .dot {
-    width: 6px; height: 6px; border-radius: 50%; background: #fff; opacity: .85;
+    width: 6px; height: 6px; border-radius: 50%; background: #fff; opacity: .9;
     animation: bounce 1s infinite ease-in-out;
   }
   .typing-bubble .dot:nth-child(2) { animation-delay: .15s; }
@@ -215,10 +214,10 @@
     color: var(--ink);
     transition: border-color .15s, box-shadow .15s;
   }
-  #inputBar input::placeholder { color: #6b7280; }
+  #inputBar input::placeholder { color: #9ca3af; }
   #inputBar input:focus {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.15);
+    border-color: var(--p1);
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
   }
   #inputBar button {
     width: 46px; height: 46px;
@@ -231,13 +230,13 @@
     flex-shrink: 0;
   }
   #inputBar button:active { transform: scale(0.92); }
-  #sendBtn { background: linear-gradient(135deg, var(--gold), var(--gold-soft)); color: var(--gold-ink); }
+  #sendBtn { background: linear-gradient(135deg, var(--p1), var(--p2)); color: #fff; }
   #sendBtn:hover { filter: brightness(1.08); }
 
   #micBtn { background: var(--surface-2); color: var(--muted); border: 1.5px solid var(--border); }
-  #micBtn:hover { border-color: rgba(212,175,55,.4); color: var(--gold-soft); }
+  #micBtn:hover { border-color: rgba(147,51,234,.4); color: var(--p2); }
   #micBtn.listening {
-    background: #7f1d1d; color: #fff; border-color: #7f1d1d;
+    background: #ef4444; color: #fff; border-color: #ef4444;
     animation: pulse 1.1s infinite;
   }
   #micBtn:disabled { opacity: .35; cursor: not-allowed; }
@@ -249,23 +248,46 @@
 
   .hint { font-size: 13px; color: var(--muted); }
 
-  /* ---------- Settings (BYOK API key) ---------- */
+  /* ---------- Top bar: settings + login ---------- */
+  #topRightBar, #topLeftBar {
+    position: fixed; top: 16px; z-index: 20;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #topLeftBar { left: 16px; }
+  #topRightBar { right: 16px; }
+
   #settingsBtn {
-    position: fixed; top: 16px; left: 16px;
     width: 40px; height: 40px; border-radius: 50%;
     border: 1.5px solid var(--border); background: var(--surface);
     color: var(--muted);
     cursor: pointer; font-size: 17px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 4px 14px rgba(0,0,0,.35);
-    z-index: 20;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
     transition: border-color .15s;
   }
-  #settingsBtn.has-key { border-color: var(--gold); color: var(--gold-soft); }
+  #settingsBtn.has-key { border-color: var(--p2); color: var(--p2); }
+
+  #authArea {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1.5px solid var(--border); border-radius: 22px;
+    padding: 5px 12px 5px 5px;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
+    font-size: 13px;
+  }
+  #authArea img { width: 26px; height: 26px; border-radius: 50%; }
+  #signInBtn {
+    border: none; background: linear-gradient(90deg, var(--p1), var(--p2));
+    color: #fff; padding: 9px 16px; border-radius: 20px; font-size: 13px;
+    font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
+  }
+  #logoutBtn {
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 12px; text-decoration: underline;
+  }
 
   #settingsOverlay {
     display: none;
-    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    position: fixed; inset: 0; background: rgba(31, 36, 48, .45);
     backdrop-filter: blur(2px);
     align-items: center; justify-content: center; z-index: 30;
     padding: 20px;
@@ -277,7 +299,7 @@
     display: flex; flex-direction: column; gap: 12px;
   }
   #settingsModal h3 {
-    margin: 0; font-family: "Playfair Display", serif; color: var(--gold-soft); font-size: 20px;
+    margin: 0; font-family: "Playfair Display", serif; color: var(--p1); font-size: 20px;
   }
   #settingsModal p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
   #settingsModal input {
@@ -285,24 +307,27 @@
     border-radius: 10px; outline: none; font-family: monospace;
     background: var(--surface-2); color: var(--ink);
   }
-  #settingsModal input:focus { border-color: var(--gold); }
+  #settingsModal input:focus { border-color: var(--p1); }
   #settingsModal .row { display: flex; gap: 8px; }
   #settingsModal button {
     padding: 11px 14px; font-size: 14px; border: none; border-radius: 10px;
     cursor: pointer; font-weight: 700;
   }
-  #saveKeyBtn { background: linear-gradient(90deg, var(--gold), var(--gold-soft)); color: var(--gold-ink); flex: 1; }
+  #saveKeyBtn { background: linear-gradient(90deg, var(--p1), var(--p2)); color: #fff; flex: 1; }
   #clearKeyBtn { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
   #closeSettingsBtn { background: transparent; color: var(--muted); align-self: flex-end; padding: 4px 8px; }
   .key-status { font-size: 12px; font-weight: 600; }
-  .key-status.set { color: #4ade80; }
-  .key-status.unset { color: #fca5a5; }
+  .key-status.set { color: #16a34a; }
+  .key-status.unset { color: #dc2626; }
 
-  a { color: var(--gold-soft); }
+  a { color: var(--p1); }
 </style>
 </head>
 <body>
-<button id="settingsBtn" title="מפתח API אישי">🔑</button>
+<div id="topLeftBar">
+  <button id="settingsBtn" title="מפתח API אישי">🔑</button>
+</div>
+<div id="topRightBar"></div>
 
 <div id="settingsOverlay">
   <div id="settingsModal">
@@ -399,6 +424,47 @@ document.getElementById("settingsOverlay").onclick = (e) => {
 refreshSettingsUI();
 if (!getStoredApiKey()) openSettings();
 
+/* ---------- Login (Google OAuth, identity only — unrelated to the API key) ---------- */
+async function refreshAuthUI() {
+  const bar = document.getElementById("topRightBar");
+  const statusRes = await fetch(API_BASE + "/api/auth-status");
+  const status = await statusRes.json();
+  if (!status.configured) { bar.innerHTML = ""; return; }
+
+  const meRes = await fetch(API_BASE + "/api/me");
+  if (meRes.ok) {
+    const user = await meRes.json();
+    bar.innerHTML = "";
+    const area = document.createElement("div");
+    area.id = "authArea";
+    if (user.picture) {
+      const img = document.createElement("img");
+      img.src = user.picture;
+      area.appendChild(img);
+    }
+    const name = document.createElement("span");
+    name.textContent = user.name || user.email;
+    area.appendChild(name);
+    const logoutBtn = document.createElement("button");
+    logoutBtn.id = "logoutBtn";
+    logoutBtn.textContent = "התנתק";
+    logoutBtn.onclick = async () => {
+      await fetch(API_BASE + "/auth/logout", { method: "POST" });
+      refreshAuthUI();
+    };
+    area.appendChild(logoutBtn);
+    bar.appendChild(area);
+  } else {
+    bar.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.id = "signInBtn";
+    btn.textContent = "התחברות עם Google";
+    btn.onclick = () => { window.location.href = API_BASE + "/auth/google/login"; };
+    bar.appendChild(btn);
+  }
+}
+refreshAuthUI();
+
 function initials(name) {
   return name.replace(/^ה/, "").slice(0, 2);
 }
@@ -488,7 +554,7 @@ function addMessage(name, color, text, isUser) {
   bubble.appendChild(nameDiv);
   bubble.appendChild(textDiv);
 
-  row.appendChild(avatarEl(isUser ? "את/ה" : name, isUser ? "#2a2d36" : color, true));
+  row.appendChild(avatarEl(isUser ? "את/ה" : name, isUser ? "#64748b" : color, true));
   row.appendChild(bubble);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
