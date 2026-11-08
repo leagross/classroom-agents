@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import anthropic
 
+import db
 from agents import (
     AGENTS_BY_KEY,
     CONNECTOR,
@@ -27,6 +28,7 @@ JESTER_EVERY_MAX = 4
 HISTORY_WINDOW = 20
 
 _client = anthropic.Anthropic()
+db.init_db()
 
 
 @dataclass
@@ -83,13 +85,40 @@ def create_session(topic: str, pool_keys: list | None = None) -> Session:
         pool = choose_pool(topic)
     session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool)
     SESSIONS[session.id] = session
+    db.insert_lesson(
+        session.id, session.topic,
+        ",".join(a.key for a in session.pool),
+        session.next_jester_round,
+    )
     return session
 
 
 def get_session(session_id: str) -> Session:
-    if session_id not in SESSIONS:
+    if session_id in SESSIONS:
+        return SESSIONS[session_id]
+
+    # Not cached in this process (e.g. restarted, or a different Render instance) —
+    # try to rehydrate it from the database before giving up.
+    lesson = db.load_lesson(session_id)
+    if not lesson:
         raise KeyError("session not found")
-    return SESSIONS[session_id]
+
+    pool_keys = lesson["pool_keys"].split(",")
+    pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY]
+    session = Session(
+        id=session_id,
+        topic=lesson["topic"],
+        pool=pool,
+        round_count=lesson["round_count"],
+        pool_turn_index=lesson["pool_turn_index"],
+        next_jester_round=lesson["next_jester_round"],
+    )
+    for row in db.load_messages(session_id):
+        session.history.append(
+            ChatMessage(row["agent_key"], row["display_name"], row["color"], row["content"])
+        )
+    SESSIONS[session_id] = session
+    return session
 
 
 AGENT_MAX_TOKENS = 1024
@@ -155,29 +184,35 @@ def _get_validated_teacher_reply(session: Session) -> str:
     return answer
 
 
+def _remember(session: Session, msg: ChatMessage):
+    session.history.append(msg)
+    db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
+
+
 def handle_user_message(session: Session, user_text: str) -> list:
-    session.history.append(ChatMessage("user", "את/ה", "#111827", user_text))
+    _remember(session, ChatMessage("user", "את/ה", "#111827", user_text))
     session.round_count += 1
 
     replies = []
 
     teacher_text = _get_validated_teacher_reply(session)
     teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
-    session.history.append(teacher_msg)
+    _remember(session, teacher_msg)
     replies.append(teacher_msg)
 
     pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
     session.pool_turn_index += 1
     pool_text = _call_agent(pool_agent, session.transcript_text())
     pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
-    session.history.append(pool_msg)
+    _remember(session, pool_msg)
     replies.append(pool_msg)
 
     if session.round_count >= session.next_jester_round:
         jester_text = _call_agent(JESTER, session.transcript_text())
         jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
-        session.history.append(jester_msg)
+        _remember(session, jester_msg)
         replies.append(jester_msg)
         session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
 
+    db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
     return replies
