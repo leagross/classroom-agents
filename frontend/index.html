@@ -279,6 +279,16 @@
   #sendBtn { background: linear-gradient(135deg, var(--p1), var(--p2)); color: #fff; }
   #sendBtn:hover { filter: brightness(1.08); }
 
+  #attachBtn { background: var(--surface-2); color: var(--muted); border: 1.5px solid var(--border); }
+  #attachBtn:hover { border-color: rgba(147,51,234,.4); color: var(--p2); }
+  #attachBtn.has-file { border-color: var(--p1); color: var(--p1); }
+
+  #attachPreview { display: none; padding: 10px 16px 0; background: var(--surface); }
+  #attachPreview.show { display: flex; align-items: center; gap: 10px; }
+  #attachPreview img { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; border: 1.5px solid var(--border); }
+  #attachPreview .file-name { font-size: 12px; color: var(--muted); flex: 1; }
+  #attachPreview button { border: none; background: transparent; color: #dc2626; cursor: pointer; font-size: 13px; }
+
   #micBtn { background: var(--surface-2); color: var(--muted); border: 1.5px solid var(--border); }
   #micBtn:hover { border-color: rgba(147,51,234,.4); color: var(--p2); }
   #micBtn.listening {
@@ -440,7 +450,10 @@
     <button id="quizBtn" onclick="openQuiz()">📝 בוחן על השיעור</button>
   </div>
   <div id="chat"></div>
+  <div id="attachPreview"></div>
   <div id="inputBar">
+    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
+    <button id="attachBtn" title="צרף תמונה (למשל שיעורי בית)">📎</button>
     <button id="micBtn" title="הקלטה קולית">🎤</button>
     <input id="messageInput" placeholder="כתוב כאן, או לחץ על המיקרופון..." onkeydown="if(event.key==='Enter') sendMessage()">
     <button id="sendBtn" onclick="sendMessage()">➤</button>
@@ -758,7 +771,7 @@ async function renderRecentLessons() {
 }
 renderRecentLessons();
 
-function addMessage(name, color, text, isUser, speak = true) {
+function addMessage(name, color, text, isUser, speak = true, imageDataUrl = null) {
   const chat = document.getElementById("chat");
   const row = document.createElement("div");
   row.className = "msg-row " + (isUser ? "user" : "");
@@ -769,9 +782,15 @@ function addMessage(name, color, text, isUser, speak = true) {
   const nameDiv = document.createElement("div");
   nameDiv.className = "name";
   nameDiv.textContent = isUser ? "את/ה" : name;
+  bubble.appendChild(nameDiv);
+  if (imageDataUrl) {
+    const img = document.createElement("img");
+    img.src = imageDataUrl;
+    img.style.cssText = "max-width:100%;border-radius:10px;margin-bottom:6px;display:block;";
+    bubble.appendChild(img);
+  }
   const textDiv = document.createElement("div");
   textDiv.textContent = text;
-  bubble.appendChild(nameDiv);
   bubble.appendChild(textDiv);
 
   row.appendChild(avatarEl(isUser ? "את/ה" : name, isUser ? "#64748b" : color, true));
@@ -817,12 +836,76 @@ function addStreamingMessage(name, color) {
   return textDiv;
 }
 
+/* ---------- File attachment (image, e.g. a photo of homework) ---------- */
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+let pendingImage = null; // { mediaType, base64, dataUrl, fileName }
+
+const fileInput = document.getElementById("fileInput");
+const attachBtn = document.getElementById("attachBtn");
+attachBtn.onclick = () => fileInput.click();
+
+fileInput.onchange = () => {
+  const file = fileInput.files[0];
+  fileInput.value = "";
+  if (!file) return;
+
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    alert("סוג קובץ לא נתמך. אפשר PNG, JPEG, WEBP או GIF.");
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    alert("הקובץ גדול מדי (מקסימום 5MB).");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const base64 = dataUrl.split(",")[1];
+    pendingImage = { mediaType: file.type, base64, dataUrl, fileName: file.name };
+    renderAttachPreview();
+  };
+  reader.readAsDataURL(file);
+};
+
+function renderAttachPreview() {
+  const preview = document.getElementById("attachPreview");
+  attachBtn.classList.toggle("has-file", !!pendingImage);
+  if (!pendingImage) {
+    preview.classList.remove("show");
+    preview.innerHTML = "";
+    return;
+  }
+  preview.classList.add("show");
+  preview.innerHTML = "";
+  const img = document.createElement("img");
+  img.src = pendingImage.dataUrl;
+  const name = document.createElement("span");
+  name.className = "file-name";
+  name.textContent = pendingImage.fileName;
+  const removeBtn = document.createElement("button");
+  removeBtn.textContent = "✕ הסר";
+  removeBtn.onclick = clearAttachment;
+  preview.appendChild(img);
+  preview.appendChild(name);
+  preview.appendChild(removeBtn);
+}
+
+function clearAttachment() {
+  pendingImage = null;
+  renderAttachPreview();
+}
+
 async function sendMessage() {
   const input = document.getElementById("messageInput");
   const text = input.value.trim();
-  if (!text || !sessionId) return;
-  addMessage(null, null, text, true);
+  if ((!text && !pendingImage) || !sessionId) return;
+
+  addMessage(null, null, text || "(ללא טקסט)", true, true, pendingImage ? pendingImage.dataUrl : null);
   input.value = "";
+  const imageToSend = pendingImage;
+  clearAttachment();
 
   const headers = {"Content-Type": "application/json"};
   const apiKey = getStoredApiKey();
@@ -833,12 +916,15 @@ async function sendMessage() {
   // a real gap here with nothing to show yet).
   const waitingRow = addTyping("", "#9ca3af");
 
+  const body = { session_id: sessionId, text: text || "(התלמיד צירף תמונה בלי טקסט נוסף)" };
+  if (imageToSend) body.image = { media_type: imageToSend.mediaType, data: imageToSend.base64 };
+
   let res;
   try {
     res = await fetch(API_BASE + "/api/message/stream", {
       method: "POST",
       headers,
-      body: JSON.stringify({ session_id: sessionId, text }),
+      body: JSON.stringify(body),
     });
   } catch (e) {
     waitingRow.remove();

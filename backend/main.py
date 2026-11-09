@@ -40,9 +40,30 @@ class CreateSessionRequest(BaseModel):
     pool_keys: list[str] | None = None  # exactly 2 keys from POOL, or None for auto-selection
 
 
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB decoded
+
+
+class ImageAttachment(BaseModel):
+    media_type: str
+    data: str  # base64, no "data:...;base64," prefix
+
+
 class MessageRequest(BaseModel):
     session_id: str
     text: str
+    image: ImageAttachment | None = None
+
+
+def _validate_image(image: ImageAttachment | None):
+    if not image:
+        return
+    if image.media_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="סוג קובץ לא נתמך. אפשר PNG, JPEG, WEBP או GIF.")
+    # base64 expands size by ~4/3; estimate the decoded size without actually decoding.
+    approx_decoded_bytes = len(image.data) * 3 / 4
+    if approx_decoded_bytes > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="הקובץ גדול מדי (מקסימום 5MB).")
 
 
 @app.get("/api/agents")
@@ -103,15 +124,22 @@ def list_lessons(request: Request):
     return {"lessons": db.list_lessons_for_user(user["email"])}
 
 
+def _image_dict(image: ImageAttachment | None) -> dict | None:
+    return {"media_type": image.media_type, "data": image.data} if image else None
+
+
 @app.post("/api/message")
 def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(default=None)):
+    _validate_image(req.image)
     try:
         session = orchestrator.get_session(req.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
     try:
-        replies = orchestrator.handle_user_message(session, req.text, api_key=x_anthropic_key)
+        replies = orchestrator.handle_user_message(
+            session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
+        )
     except orchestrator.MissingApiKeyError:
         raise HTTPException(
             status_code=401,
@@ -139,14 +167,22 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
     Errors (missing/invalid key, etc.) are delivered as an SSE event with
     type "error" rather than an HTTP error status — by the time this starts
     streaming, the 200 response has already begun, so the status code can't
-    change anymore. See orchestrator.handle_user_message_stream for why."""
+    change anymore. See orchestrator.handle_user_message_stream for why.
+
+    The image attachment is validated eagerly (type/size), before the stream
+    starts, since that check doesn't depend on the model and can still
+    return a normal HTTP error status."""
+    _validate_image(req.image)
     try:
         session = orchestrator.get_session(req.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
     def event_source():
-        for event in orchestrator.handle_user_message_stream(session, req.text, api_key=x_anthropic_key):
+        stream = orchestrator.handle_user_message_stream(
+            session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
+        )
+        for event in stream:
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

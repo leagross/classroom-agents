@@ -153,8 +153,26 @@ AGENT_MAX_TOKENS = 1024
 VERIFIER_MAX_TOKENS = 300
 
 
-def _call_agent(agent, transcript: str, extra_instruction: str = "", api_key: str | None = None) -> str:
-    user_content = (
+def _build_user_content(text: str, image: dict | None):
+    """Plain string when there's no image (unchanged, minimal request shape);
+    a content-block list with an image block when there is one — only the
+    teacher ever receives `image`, so it can actually look at what the
+    student uploaded instead of just reading a '[image attached]' note."""
+    if not image:
+        return text
+    return [
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": image["media_type"], "data": image["data"]},
+        },
+        {"type": "text", "text": text},
+    ]
+
+
+def _call_agent(
+    agent, transcript: str, extra_instruction: str = "", api_key: str | None = None, image: dict | None = None
+) -> str:
+    user_text = (
         f"{transcript}\n\n"
         f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
         f"{extra_instruction}"
@@ -164,7 +182,7 @@ def _call_agent(agent, transcript: str, extra_instruction: str = "", api_key: st
         model=MODEL,
         max_tokens=AGENT_MAX_TOKENS,
         system=agent.system_prompt,
-        messages=[{"role": "user", "content": user_content}],
+        messages=[{"role": "user", "content": _build_user_content(user_text, image)}],
     )
     block_types = [b.type for b in response.content]
     text = "".join(block.text for block in response.content if block.type == "text").strip()
@@ -223,9 +241,9 @@ def _verify_teacher_answer(topic: str, answer: str, api_key: str | None = None) 
     return False, verdict
 
 
-def _get_validated_teacher_reply(session: Session, api_key: str | None = None) -> str:
+def _get_validated_teacher_reply(session: Session, api_key: str | None = None, image: dict | None = None) -> str:
     transcript = session.transcript_text()
-    answer = _call_agent(TEACHER, transcript, api_key=api_key)
+    answer = _call_agent(TEACHER, transcript, api_key=api_key, image=image)
     for _ in range(MAX_VERIFY_RETRIES):
         ok, reason = _verify_teacher_answer(session.topic, answer, api_key=api_key)
         if ok:
@@ -238,6 +256,7 @@ def _get_validated_teacher_reply(session: Session, api_key: str | None = None) -
                 "תקן אותה בתשובה הבאה. "
             ),
             api_key=api_key,
+            image=image,
         )
     return answer
 
@@ -247,13 +266,16 @@ def _remember(session: Session, msg: ChatMessage):
     db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
 
 
-def handle_user_message(session: Session, user_text: str, api_key: str | None = None) -> list:
-    _remember(session, ChatMessage("user", "את/ה", "#111827", user_text))
+def handle_user_message(
+    session: Session, user_text: str, api_key: str | None = None, image: dict | None = None
+) -> list:
+    display_text = user_text + (" 📎 [תמונה מצורפת]" if image else "")
+    _remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
     session.round_count += 1
 
     replies = []
 
-    teacher_text = _get_validated_teacher_reply(session, api_key=api_key)
+    teacher_text = _get_validated_teacher_reply(session, api_key=api_key, image=image)
     teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
     _remember(session, teacher_msg)
     replies.append(teacher_msg)
@@ -279,7 +301,9 @@ def handle_user_message(session: Session, user_text: str, api_key: str | None = 
 TEACHER_REPLAY_DELAY = 0.02  # seconds between words when "replaying" the already-verified teacher answer
 
 
-def handle_user_message_stream(session: Session, user_text: str, api_key: str | None = None):
+def handle_user_message_stream(
+    session: Session, user_text: str, api_key: str | None = None, image: dict | None = None
+):
     """Generator of dict events for incremental (SSE) delivery to the browser:
     {"type": "start", "key", "name", "color"} / {"type": "token", "text"} /
     {"type": "end"} per agent reply, then a final {"type": "done"}.
@@ -301,11 +325,12 @@ def handle_user_message_stream(session: Session, user_text: str, api_key: str | 
     sent — an exception here can't change the status code anymore.
     """
     try:
-        _remember(session, ChatMessage("user", "את/ה", "#111827", user_text))
+        display_text = user_text + (" 📎 [תמונה מצורפת]" if image else "")
+        _remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
         session.round_count += 1
 
         # --- Teacher: verify silently, then replay the validated text ---
-        teacher_text = _get_validated_teacher_reply(session, api_key=api_key)
+        teacher_text = _get_validated_teacher_reply(session, api_key=api_key, image=image)
         yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
         for chunk in _word_chunks(teacher_text):
             yield {"type": "token", "text": chunk}
