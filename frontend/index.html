@@ -267,6 +267,18 @@
   }
   #settingsBtn.has-key { border-color: var(--p2); color: var(--p2); }
 
+  #ttsBtn {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 1.5px solid var(--border); background: var(--surface);
+    color: var(--muted);
+    cursor: pointer; font-size: 17px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
+    transition: border-color .15s, color .15s;
+  }
+  #ttsBtn.active { border-color: var(--p1); color: var(--p1); }
+  #ttsBtn:disabled { opacity: .35; cursor: not-allowed; }
+
   #authArea {
     display: flex; align-items: center; gap: 8px;
     background: var(--surface); border: 1.5px solid var(--border); border-radius: 22px;
@@ -326,6 +338,7 @@
 <body>
 <div id="topLeftBar">
   <button id="settingsBtn" title="מפתח API אישי">🔑</button>
+  <button id="ttsBtn" title="הקראת תשובות בקול">🔇</button>
 </div>
 <div id="topRightBar"></div>
 
@@ -465,6 +478,48 @@ async function refreshAuthUI() {
 }
 refreshAuthUI();
 
+/* ---------- Text-to-speech (agent replies read aloud, Web Speech Synthesis API) ---------- */
+const TTS_STORAGE = "classroom_tts_enabled";
+const ttsBtn = document.getElementById("ttsBtn");
+let ttsEnabled = localStorage.getItem(TTS_STORAGE) === "1";
+let heVoice = null;
+
+function pickHebrewVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  heVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith("he")) || null;
+}
+
+if (!("speechSynthesis" in window)) {
+  ttsBtn.disabled = true;
+  ttsBtn.title = "הדפדפן הזה לא תומך בהקראה קולית";
+} else {
+  pickHebrewVoice();
+  window.speechSynthesis.onvoiceschanged = pickHebrewVoice;
+
+  function updateTtsBtn() {
+    ttsBtn.textContent = ttsEnabled ? "🔊" : "🔇";
+    ttsBtn.classList.toggle("active", ttsEnabled);
+    ttsBtn.title = ttsEnabled ? "הקראה פעילה (לחץ לכיבוי)" : "הקראת תשובות בקול (כבויה)";
+  }
+  updateTtsBtn();
+
+  ttsBtn.onclick = () => {
+    ttsEnabled = !ttsEnabled;
+    localStorage.setItem(TTS_STORAGE, ttsEnabled ? "1" : "0");
+    if (!ttsEnabled) window.speechSynthesis.cancel();
+    updateTtsBtn();
+  };
+
+  window.speakReply = function (text) {
+    if (!ttsEnabled) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "he-IL";
+    if (heVoice) utter.voice = heVoice;
+    window.speechSynthesis.speak(utter);
+  };
+}
+if (!window.speakReply) window.speakReply = function () {};
+
 function initials(name) {
   return name.replace(/^ה/, "").slice(0, 2);
 }
@@ -558,6 +613,8 @@ function addMessage(name, color, text, isUser) {
   row.appendChild(bubble);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
+
+  if (!isUser) window.speakReply(text);
 }
 
 function addTyping(name, color) {
@@ -639,6 +696,7 @@ if (!SpeechRecognition) {
     if (listening) {
       recognizer.stop();
     } else {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
       listening = true;
       micBtn.classList.add("listening");
       try { recognizer.start(); } catch (e) { stopListening(); }
