@@ -1,5 +1,6 @@
 """Session state and turn orchestration for the virtual classroom."""
 
+import json
 import os
 import random
 import uuid
@@ -14,6 +15,7 @@ from agents import (
     DEEP_DIVER,
     JESTER,
     POOL,
+    QUIZ_SYSTEM_PROMPT,
     SIMPLIFIER,
     STUDENT_DANI,
     TEACHER,
@@ -67,6 +69,15 @@ class Session:
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]
         for m in self.history[-HISTORY_WINDOW:]:
+            lines.append(f"{m.display_name}: {m.content}")
+        return "\n".join(lines)
+
+    def full_transcript_text(self):
+        """Unlike transcript_text (windowed, used to keep per-turn prompts
+        small), this includes the whole lesson — a quiz should be able to
+        draw on anything discussed, not just the last few exchanges."""
+        lines = [f"נושא השיעור: {self.topic}"]
+        for m in self.history:
             lines.append(f"{m.display_name}: {m.content}")
         return "\n".join(lines)
 
@@ -233,3 +244,53 @@ def handle_user_message(session: Session, user_text: str, api_key: str | None = 
 
     db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
     return replies
+
+
+QUIZ_MODEL = os.environ.get("CLASSROOM_QUIZ_MODEL", MODEL)
+QUIZ_MAX_TOKENS = 1500
+QUIZ_MAX_RETRIES = 2
+
+
+class QuizGenerationError(Exception):
+    pass
+
+
+def _extract_json_array(raw: str):
+    """The model is instructed to return raw JSON, but models occasionally
+    wrap it in a ```json code fence anyway — strip that defensively before
+    parsing instead of failing the whole quiz over a formatting slip."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    return json.loads(text)
+
+
+def generate_quiz(session: Session, api_key: str | None = None) -> list:
+    user_content = session.full_transcript_text()
+    last_error = None
+    for _ in range(QUIZ_MAX_RETRIES):
+        response = _get_client(api_key).messages.create(
+            model=QUIZ_MODEL,
+            max_tokens=QUIZ_MAX_TOKENS,
+            system=QUIZ_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        try:
+            questions = _extract_json_array(raw)
+            if not isinstance(questions, list) or not questions:
+                raise ValueError("expected a non-empty JSON array")
+            for q in questions:
+                if not (isinstance(q.get("options"), list) and len(q["options"]) >= 2):
+                    raise ValueError("question missing valid options")
+                if not isinstance(q.get("correct_index"), int):
+                    raise ValueError("question missing correct_index")
+            return questions
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            last_error = e
+            print(f"[generate_quiz] malformed quiz JSON, retrying: {e}; raw={raw[:300]!r}")
+
+    raise QuizGenerationError(f"לא הצלחתי לבנות בוחן תקין: {last_error}")

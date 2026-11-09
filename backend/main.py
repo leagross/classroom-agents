@@ -128,6 +128,33 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
     }
 
 
+@app.post("/api/session/{session_id}/quiz")
+def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=None)):
+    try:
+        session = orchestrator.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    if session.round_count < 1:
+        raise HTTPException(status_code=400, detail="אין עדיין מספיק שיחה בשיעור כדי לבנות בוחן.")
+
+    try:
+        questions = orchestrator.generate_quiz(session, api_key=x_anthropic_key)
+    except orchestrator.MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
+    except orchestrator.QuizGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"questions": questions}
+
+
 app.include_router(slack_bot.router)
 app.include_router(auth.router)
 

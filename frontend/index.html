@@ -133,13 +133,59 @@
 
   /* ---------- Chat ---------- */
   #topicBar {
-    padding: 12px 22px;
+    padding: 10px 22px;
     font-size: 13px;
     color: var(--muted);
     display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-1);
   }
+  #quizBtn {
+    border: none; background: linear-gradient(90deg, var(--p1), var(--p2));
+    color: #fff; padding: 7px 14px; border-radius: 16px; font-size: 12px;
+    font-weight: 700; cursor: pointer; white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
+  }
+  #quizBtn:disabled { opacity: .5; cursor: not-allowed; }
+
+  #quizOverlay {
+    display: none;
+    position: fixed; inset: 0; background: rgba(31, 36, 48, .45);
+    backdrop-filter: blur(2px);
+    align-items: center; justify-content: center; z-index: 30;
+    padding: 20px;
+  }
+  #quizOverlay.open { display: flex; }
+  #quizModal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px;
+    max-width: 520px; width: 100%; max-height: 85vh; overflow-y: auto;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  #quizModal h3 {
+    margin: 0; font-family: "Playfair Display", serif; color: var(--p1); font-size: 20px;
+  }
+  #closeQuizBtn { background: transparent; border: none; color: var(--muted); align-self: flex-end; padding: 4px 8px; cursor: pointer; font-size: 15px; }
+  .quiz-question { border: 1.5px solid var(--border); border-radius: 14px; padding: 14px; background: var(--surface-2); }
+  .quiz-question .q-text { font-weight: 700; margin-bottom: 10px; }
+  .quiz-option {
+    display: block; width: 100%; text-align: right; padding: 10px 12px; margin-bottom: 6px;
+    border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface);
+    cursor: pointer; font-size: 14px; font-family: inherit; color: var(--ink);
+  }
+  .quiz-option:hover { border-color: var(--p2); }
+  .quiz-option.selected { border-color: var(--p1); background: rgba(79,70,229,.08); }
+  .quiz-option.correct { border-color: #16a34a; background: rgba(22,163,74,.1); }
+  .quiz-option.incorrect { border-color: #dc2626; background: rgba(220,38,38,.1); }
+  .quiz-explanation { font-size: 13px; color: var(--muted); margin-top: 8px; display: none; }
+  #quizSubmitBtn {
+    padding: 13px; font-size: 15px; font-weight: 700; border: none; border-radius: 12px;
+    background: linear-gradient(90deg, var(--p1), var(--p2)); color: #fff; cursor: pointer;
+  }
+  #quizScore { font-size: 15px; font-weight: 700; text-align: center; }
 
   #chat {
     flex: 1;
@@ -389,12 +435,23 @@
 
     <div id="recentLessons"></div>
   </div>
-  <div id="topicBar"></div>
+  <div id="topicBar">
+    <span id="topicBarText"></span>
+    <button id="quizBtn" onclick="openQuiz()">📝 בוחן על השיעור</button>
+  </div>
   <div id="chat"></div>
   <div id="inputBar">
     <button id="micBtn" title="הקלטה קולית">🎤</button>
     <input id="messageInput" placeholder="כתוב כאן, או לחץ על המיקרופון..." onkeydown="if(event.key==='Enter') sendMessage()">
     <button id="sendBtn" onclick="sendMessage()">➤</button>
+  </div>
+</div>
+
+<div id="quizOverlay">
+  <div id="quizModal">
+    <button id="closeQuizBtn" onclick="closeQuiz()">✕</button>
+    <h3>בוחן על השיעור</h3>
+    <div id="quizBody"></div>
   </div>
 </div>
 
@@ -589,8 +646,9 @@ function enterChatUI(id, topic, poolNames) {
   document.getElementById("chat").style.display = "flex";
   document.getElementById("inputBar").style.display = "flex";
   const topicBar = document.getElementById("topicBar");
-  topicBar.style.display = "block";
-  topicBar.textContent = `נושא: ${topic} · הרכב הכיתה: המורה, ${poolNames.join(", ")}`;
+  topicBar.style.display = "flex";
+  document.getElementById("topicBarText").textContent =
+    `נושא: ${topic} · הרכב הכיתה: המורה, ${poolNames.join(", ")}`;
 }
 
 async function startSession() {
@@ -814,6 +872,111 @@ if (!SpeechRecognition) {
 function stopListening() {
   listening = false;
   micBtn.classList.remove("listening");
+}
+
+/* ---------- Quiz ---------- */
+let currentQuiz = null;    // array of {question, options, correct_index, explanation}
+let quizAnswers = {};      // questionIndex -> selected option index
+
+function closeQuiz() { document.getElementById("quizOverlay").classList.remove("open"); }
+
+document.getElementById("quizOverlay").onclick = (e) => {
+  if (e.target.id === "quizOverlay") closeQuiz();
+};
+
+async function openQuiz() {
+  const quizBtn = document.getElementById("quizBtn");
+  const body = document.getElementById("quizBody");
+  document.getElementById("quizOverlay").classList.add("open");
+  quizBtn.disabled = true;
+  body.innerHTML = "<p>בונה בוחן על השיעור...</p>";
+
+  const headers = {};
+  const apiKey = getStoredApiKey();
+  if (apiKey) headers["X-Anthropic-Key"] = apiKey;
+
+  try {
+    const res = await fetch(API_BASE + "/api/session/" + sessionId + "/quiz", {
+      method: "POST",
+      headers,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      body.innerHTML = `<p>${data.detail || "לא הצלחתי לבנות בוחן."}</p>`;
+      return;
+    }
+    currentQuiz = data.questions;
+    quizAnswers = {};
+    renderQuiz();
+  } catch (e) {
+    body.innerHTML = "<p>שגיאת רשת בבניית הבוחן. נסה שוב.</p>";
+  } finally {
+    quizBtn.disabled = false;
+  }
+}
+
+function renderQuiz() {
+  const body = document.getElementById("quizBody");
+  body.innerHTML = "";
+  currentQuiz.forEach((q, qi) => {
+    const card = document.createElement("div");
+    card.className = "quiz-question";
+    const qText = document.createElement("div");
+    qText.className = "q-text";
+    qText.textContent = `${qi + 1}. ${q.question}`;
+    card.appendChild(qText);
+
+    q.options.forEach((opt, oi) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quiz-option";
+      btn.textContent = opt;
+      btn.onclick = () => {
+        quizAnswers[qi] = oi;
+        card.querySelectorAll(".quiz-option").forEach(b => b.classList.remove("selected"));
+        btn.classList.add("selected");
+      };
+      card.appendChild(btn);
+    });
+
+    const expl = document.createElement("div");
+    expl.className = "quiz-explanation";
+    expl.textContent = q.explanation || "";
+    card.appendChild(expl);
+
+    body.appendChild(card);
+  });
+
+  const submitBtn = document.createElement("button");
+  submitBtn.id = "quizSubmitBtn";
+  submitBtn.textContent = "הגש בוחן";
+  submitBtn.onclick = gradeQuiz;
+  body.appendChild(submitBtn);
+}
+
+function gradeQuiz() {
+  const body = document.getElementById("quizBody");
+  let correct = 0;
+  const cards = body.querySelectorAll(".quiz-question");
+  currentQuiz.forEach((q, qi) => {
+    const card = cards[qi];
+    const options = card.querySelectorAll(".quiz-option");
+    const chosen = quizAnswers[qi];
+    options.forEach((btn, oi) => {
+      btn.disabled = true;
+      if (oi === q.correct_index) btn.classList.add("correct");
+      else if (oi === chosen) btn.classList.add("incorrect");
+    });
+    card.querySelector(".quiz-explanation").style.display = "block";
+    if (chosen === q.correct_index) correct++;
+  });
+
+  const submitBtn = document.getElementById("quizSubmitBtn");
+  submitBtn.remove();
+  const score = document.createElement("div");
+  score.id = "quizScore";
+  score.textContent = `הציון שלך: ${correct} מתוך ${currentQuiz.length}`;
+  body.appendChild(score);
 }
 
 loadAgents();
