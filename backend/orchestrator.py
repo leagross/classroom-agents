@@ -91,7 +91,7 @@ def choose_pool(topic: str):
     return random.sample(POOL, 2)
 
 
-def create_session(topic: str, pool_keys: list | None = None) -> Session:
+def create_session(topic: str, pool_keys: list | None = None, user_email: str | None = None) -> Session:
     if pool_keys:
         pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY and AGENTS_BY_KEY[k] in POOL]
         if len(pool) != 2:
@@ -104,6 +104,7 @@ def create_session(topic: str, pool_keys: list | None = None) -> Session:
         session.id, session.topic,
         ",".join(a.key for a in session.pool),
         session.next_jester_round,
+        user_email=user_email,
     )
     return session
 

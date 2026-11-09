@@ -33,9 +33,13 @@ _SCHEMA_STATEMENTS = [
         round_count INTEGER NOT NULL DEFAULT 0,
         pool_turn_index INTEGER NOT NULL DEFAULT 0,
         next_jester_round INTEGER NOT NULL,
+        user_email TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # Older deployments created the table before user_email existed.
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS user_email TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_lessons_user_email ON lessons(user_email)",
     """
     CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -72,16 +76,19 @@ def init_db():
             conn.execute(text(stmt))
 
 
-def insert_lesson(lesson_id: str, topic: str, pool_keys: str, next_jester_round: int):
+def insert_lesson(lesson_id: str, topic: str, pool_keys: str, next_jester_round: int, user_email: str | None = None):
     if not _engine:
         return
     with _engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO lessons (id, topic, pool_keys, next_jester_round) "
-                "VALUES (:id, :topic, :pool_keys, :njr)"
+                "INSERT INTO lessons (id, topic, pool_keys, next_jester_round, user_email) "
+                "VALUES (:id, :topic, :pool_keys, :njr, :user_email)"
             ),
-            {"id": lesson_id, "topic": topic, "pool_keys": pool_keys, "njr": next_jester_round},
+            {
+                "id": lesson_id, "topic": topic, "pool_keys": pool_keys,
+                "njr": next_jester_round, "user_email": user_email,
+            },
         )
 
 
@@ -115,6 +122,25 @@ def insert_message(lesson_id: str, agent_key: str, display_name: str, color: str
                 "content": content,
             },
         )
+
+
+def list_lessons_for_user(user_email: str, limit: int = 20):
+    if not _engine:
+        return []
+    with _engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, topic, round_count, created_at
+                FROM lessons
+                WHERE user_email = :user_email
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"user_email": user_email, "limit": limit},
+        ).mappings().all()
+        return [dict(r) for r in rows]
 
 
 def load_lesson(lesson_id: str):

@@ -248,6 +248,20 @@
 
   .hint { font-size: 13px; color: var(--muted); }
 
+  #recentLessons { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+  #recentLessons h4 {
+    margin: 10px 0 0; font-size: 13px; font-weight: 700; color: var(--muted);
+  }
+  .lesson-card {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 14px;
+    cursor: pointer; background: var(--surface-2);
+    transition: border-color .15s, transform .1s;
+  }
+  .lesson-card:hover { border-color: rgba(147,51,234,.4); transform: translateY(-1px); }
+  .lesson-card .lesson-topic { font-weight: 600; font-size: 14px; }
+  .lesson-card .lesson-meta { font-size: 12px; color: var(--muted); }
+
   /* ---------- Top bar: settings + login ---------- */
   #topRightBar, #topLeftBar {
     position: fixed; top: 16px; z-index: 20;
@@ -372,6 +386,8 @@
     <div id="poolChoices"></div>
 
     <button id="startBtn" onclick="startSession()">התחל שיעור</button>
+
+    <div id="recentLessons"></div>
   </div>
   <div id="topicBar"></div>
   <div id="chat"></div>
@@ -567,6 +583,16 @@ function toggleAgent(key, card) {
   });
 }
 
+function enterChatUI(id, topic, poolNames) {
+  sessionId = id;
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("chat").style.display = "flex";
+  document.getElementById("inputBar").style.display = "flex";
+  const topicBar = document.getElementById("topicBar");
+  topicBar.style.display = "block";
+  topicBar.textContent = `נושא: ${topic} · הרכב הכיתה: המורה, ${poolNames.join(", ")}`;
+}
+
 async function startSession() {
   if (!getStoredApiKey()) { openSettings(); return; }
   const topic = document.getElementById("topicInput").value.trim();
@@ -584,16 +610,97 @@ async function startSession() {
     return;
   }
   const data = await res.json();
-  sessionId = data.session_id;
-  document.getElementById("setup").style.display = "none";
-  document.getElementById("chat").style.display = "flex";
-  document.getElementById("inputBar").style.display = "flex";
-  const topicBar = document.getElementById("topicBar");
-  topicBar.style.display = "block";
-  topicBar.textContent = `נושא: ${data.topic} · הרכב הכיתה: המורה, ${data.pool.map(a => a.name).join(", ")}`;
+  const poolNames = data.pool.map(a => a.name);
+  saveRecentLesson(data.session_id, data.topic, poolNames);
+  enterChatUI(data.session_id, data.topic, poolNames);
 }
 
-function addMessage(name, color, text, isUser) {
+async function resumeLesson(id) {
+  const res = await fetch(API_BASE + "/api/session/" + id);
+  if (!res.ok) {
+    alert("לא הצלחתי לטעון את השיעור הזה (אולי נמחק עם ריסטרט שרת בלי DB מחובר).");
+    return;
+  }
+  const data = await res.json();
+  const poolNames = data.pool.map(a => a.name);
+  document.getElementById("chat").innerHTML = "";
+  for (const m of data.history) {
+    addMessage(m.agent, m.color, m.text, m.is_user, /* speak= */ false);
+  }
+  enterChatUI(data.session_id, data.topic, poolNames);
+}
+
+/* ---------- Recent lessons (localStorage, works without login) ---------- */
+const RECENT_LESSONS_STORAGE = "classroom_recent_lessons";
+const RECENT_LESSONS_MAX = 8;
+
+function getRecentLessons() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_LESSONS_STORAGE) || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveRecentLesson(id, topic, poolNames) {
+  let list = getRecentLessons().filter(l => l.id !== id);
+  list.unshift({ id, topic, poolNames, ts: Date.now() });
+  list = list.slice(0, RECENT_LESSONS_MAX);
+  localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
+}
+
+function lessonCard(id, topic, metaText) {
+  const card = document.createElement("div");
+  card.className = "lesson-card";
+  const left = document.createElement("div");
+  const topicDiv = document.createElement("div");
+  topicDiv.className = "lesson-topic";
+  topicDiv.textContent = topic;
+  const metaDiv = document.createElement("div");
+  metaDiv.className = "lesson-meta";
+  metaDiv.textContent = metaText;
+  left.appendChild(topicDiv);
+  left.appendChild(metaDiv);
+  card.appendChild(left);
+  card.appendChild(document.createTextNode("↩"));
+  card.onclick = () => resumeLesson(id);
+  return card;
+}
+
+async function renderRecentLessons() {
+  const container = document.getElementById("recentLessons");
+  container.innerHTML = "";
+
+  const local = getRecentLessons();
+  if (local.length) {
+    const h = document.createElement("h4");
+    h.textContent = "שיעורים אחרונים בדפדפן הזה";
+    container.appendChild(h);
+    local.forEach(l => {
+      container.appendChild(lessonCard(l.id, l.topic, (l.poolNames || []).join(", ")));
+    });
+  }
+
+  const meRes = await fetch(API_BASE + "/api/me");
+  if (meRes.ok) {
+    const lessonsRes = await fetch(API_BASE + "/api/lessons");
+    if (lessonsRes.ok) {
+      const { lessons } = await lessonsRes.json();
+      if (lessons.length) {
+        const h = document.createElement("h4");
+        h.textContent = "השיעורים שלי (מהחשבון שלך)";
+        container.appendChild(h);
+        lessons.forEach(l => {
+          const d = new Date(l.created_at);
+          container.appendChild(lessonCard(l.id, l.topic, d.toLocaleDateString("he-IL")));
+        });
+      }
+    }
+  }
+}
+renderRecentLessons();
+
+function addMessage(name, color, text, isUser, speak = true) {
   const chat = document.getElementById("chat");
   const row = document.createElement("div");
   row.className = "msg-row " + (isUser ? "user" : "");
@@ -614,7 +721,7 @@ function addMessage(name, color, text, isUser) {
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 
-  if (!isUser) window.speakReply(text);
+  if (!isUser && speak) window.speakReply(text);
 }
 
 function addTyping(name, color) {
