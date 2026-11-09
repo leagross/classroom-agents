@@ -7,6 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 <style>
   :root {
     --bg-0: #eef1fb;
@@ -606,6 +609,22 @@ if (!("speechSynthesis" in window)) {
 }
 if (!window.speakReply) window.speakReply = function () {};
 
+/* ---------- Math formula rendering (KaTeX): $...$ inline, $$...$$ display ---------- */
+function renderMath(el) {
+  if (!el || typeof window.renderMathInElement !== "function") return;
+  try {
+    window.renderMathInElement(el, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+      ],
+      throwOnError: false,
+    });
+  } catch (e) { /* malformed LaTeX from the model shouldn't break the chat */ }
+}
+
 function initials(name) {
   return name.replace(/^ה/, "").slice(0, 2);
 }
@@ -797,6 +816,7 @@ function addMessage(name, color, text, isUser, speak = true, imageDataUrl = null
   row.appendChild(bubble);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
+  renderMath(textDiv);
 
   if (!isUser && speak) window.speakReply(text);
 }
@@ -967,7 +987,10 @@ async function sendMessage() {
         currentTextEl.textContent = currentFullText;
         document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
       } else if (evt.type === "end") {
-        if (currentTextEl) window.speakReply(currentFullText);
+        if (currentTextEl) {
+          renderMath(currentTextEl);
+          window.speakReply(currentFullText);
+        }
         currentTextEl = null;
       } else if (evt.type === "error") {
         alert(evt.detail || "שגיאה בשליחת ההודעה.");
@@ -1096,6 +1119,8 @@ function renderQuiz() {
   submitBtn.textContent = "הגש בוחן";
   submitBtn.onclick = gradeQuiz;
   body.appendChild(submitBtn);
+
+  renderMath(body);
 }
 
 function gradeQuiz() {

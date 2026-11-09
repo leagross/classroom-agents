@@ -152,6 +152,11 @@ def get_session(session_id: str) -> Session:
 AGENT_MAX_TOKENS = 1024
 VERIFIER_MAX_TOKENS = 300
 
+LATEX_INSTRUCTION = (
+    "אם בתשובה שלך יש נוסחה מתמטית, כתוב אותה בפורמט LaTeX: נוסחה בתוך השורה בין $ $ "
+    "(למשל $x^2+1$), ונוסחה בשורה נפרדת בין $$ $$. אל תשתמש בפורמט הזה לשום דבר חוץ מנוסחאות. "
+)
+
 
 def _build_user_content(text: str, image: dict | None):
     """Plain string when there's no image (unchanged, minimal request shape);
@@ -176,6 +181,7 @@ def _call_agent(
         f"{transcript}\n\n"
         f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
         f"{extra_instruction}"
+        f"{LATEX_INSTRUCTION}"
         "כתוב רק את התגובה שלך, בלי לציין את שמך."
     )
     response = _get_client(api_key).messages.create(
@@ -205,6 +211,7 @@ def _call_agent_stream(agent, transcript: str, api_key: str | None = None):
     user_content = (
         f"{transcript}\n\n"
         f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
+        f"{LATEX_INSTRUCTION}"
         "כתוב רק את התגובה שלך, בלי לציין את שמך."
     )
     with _get_client(api_key).messages.stream(

@@ -120,5 +120,7 @@ QUIZ_SYSTEM_PROMPT = (
     "\"correct_index\": 0, \"explanation\": \"...\"},\n"
     "  ...\n"
     "]\n"
-    "correct_index הוא האינדקס (0-3) של התשובה הנכונה במערך options. כתוב הכל בעברית."
+    "correct_index הוא האינדקס (0-3) של התשובה הנכונה במערך options. כתוב הכל בעברית.\n"
+    "אם יש נוסחה מתמטית בתוך question/options/explanation, כתוב אותה בפורמט LaTeX "
+    "בין $ $ (למשל $x^2+1$) — זה עדיין חייב להיות בתוך מחרוזת JSON תקינה."
 )
