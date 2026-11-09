@@ -36,9 +36,91 @@
       linear-gradient(180deg, var(--bg-0), var(--bg-1));
     color: var(--ink);
     margin: 0;
+    min-height: 100vh;
+  }
+
+  /* #layout forces a literal left-to-right column order (sidebar, then main
+     content) regardless of the page's RTL text direction — each column sets
+     its own direction:rtl back for its Hebrew content. */
+  #layout {
+    display: flex;
+    direction: ltr;
+    height: 100vh;
+  }
+
+  #sidebar {
+    direction: rtl;
+    width: 280px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow);
+  }
+  #sidebarHeader { padding: 18px 16px 12px; border-bottom: 1px solid var(--border); }
+  #sidebarHeader h2 {
+    margin: 0 0 12px;
+    font-family: "Playfair Display", serif;
+    font-size: 19px;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--p1), var(--p2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  #newLessonBtn {
+    width: 100%;
+    padding: 11px;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--p1), var(--p2));
+    color: #fff;
+    cursor: pointer;
+  }
+  #newLessonBtn:hover { filter: brightness(1.07); }
+
+  #sidebarLessons {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #sidebarLessons h4 {
+    margin: 10px 4px 2px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  #sidebarLessons .empty-hint {
+    margin: 10px 4px; font-size: 12px; color: var(--muted);
+  }
+  .sidebar-lesson {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 10px; border-radius: 10px; cursor: pointer;
+    border: 1.5px solid transparent;
+    transition: background .12s, border-color .12s;
+  }
+  .sidebar-lesson:hover { background: var(--surface-2); }
+  .sidebar-lesson.active {
+    background: rgba(79, 70, 229, 0.08);
+    border-color: rgba(79, 70, 229, .35);
+  }
+  .sidebar-lesson .lesson-topic { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-lesson .lesson-meta { font-size: 11px; color: var(--muted); }
+
+  #mainArea {
+    direction: rtl;
+    flex: 1;
     display: flex;
     justify-content: center;
-    min-height: 100vh;
+    overflow: hidden;
   }
 
   #app {
@@ -48,8 +130,6 @@
     flex-direction: column;
     height: 100vh;
     background: var(--surface);
-    box-shadow: var(--shadow);
-    border-inline: 1px solid var(--border);
   }
 
   /* ---------- Setup screen ---------- */
@@ -307,20 +387,6 @@
 
   .hint { font-size: 13px; color: var(--muted); }
 
-  #recentLessons { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
-  #recentLessons h4 {
-    margin: 10px 0 0; font-size: 13px; font-weight: 700; color: var(--muted);
-  }
-  .lesson-card {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 14px;
-    cursor: pointer; background: var(--surface-2);
-    transition: border-color .15s, transform .1s;
-  }
-  .lesson-card:hover { border-color: rgba(147,51,234,.4); transform: translateY(-1px); }
-  .lesson-card .lesson-topic { font-weight: 600; font-size: 14px; }
-  .lesson-card .lesson-meta { font-size: 12px; color: var(--muted); }
-
   /* ---------- Top bar: settings + login ---------- */
   #topRightBar, #topLeftBar {
     position: fixed; top: 16px; z-index: 20;
@@ -406,6 +472,15 @@
   .key-status.unset { color: #dc2626; }
 
   a { color: var(--p1); }
+
+  @media (max-width: 720px) {
+    #sidebar { width: 86px; }
+    #sidebarHeader h2, .sidebar-lesson .lesson-meta { display: none; }
+    #sidebarHeader { padding: 12px 6px; }
+    #newLessonBtn { font-size: 11px; padding: 10px 2px; line-height: 1.3; }
+    .sidebar-lesson .lesson-topic { white-space: normal; font-size: 10px; text-align: center; }
+    #sidebarLessons h4 { text-align: center; font-size: 9px; }
+  }
 </style>
 </head>
 <body>
@@ -434,32 +509,42 @@
   </div>
 </div>
 
-<div id="app">
-  <div id="setup">
-    <h2>כיתה של סוכנים</h2>
-    <p class="subtitle">חוג לימוד פרטי עם מספר מורים וירטואליים</p>
-    <p>איזה נושא תרצה ללמוד היום?</p>
-    <input id="topicInput" placeholder="למשל: אלגברה לינארית, מלחמת העולם הראשונה, פוטוסינתזה...">
-
-    <p class="hint">בחר ידנית 2 "תלמידים" שישתתפו בשיעור, או השאר לא-בחור ותן למערכת לבחור אוטומטית לפי הנושא:</p>
-    <div id="poolChoices"></div>
-
-    <button id="startBtn" onclick="startSession()">התחל שיעור</button>
-
-    <div id="recentLessons"></div>
+<div id="layout">
+  <div id="sidebar">
+    <div id="sidebarHeader">
+      <h2>כיתה של סוכנים</h2>
+      <button id="newLessonBtn" onclick="showSetupScreen()">+ שיעור חדש</button>
+    </div>
+    <div id="sidebarLessons"></div>
   </div>
-  <div id="topicBar">
-    <span id="topicBarText"></span>
-    <button id="quizBtn" onclick="openQuiz()">📝 בוחן על השיעור</button>
-  </div>
-  <div id="chat"></div>
-  <div id="attachPreview"></div>
-  <div id="inputBar">
-    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
-    <button id="attachBtn" title="צרף תמונה (למשל שיעורי בית)">📎</button>
-    <button id="micBtn" title="הקלטה קולית">🎤</button>
-    <input id="messageInput" placeholder="כתוב כאן, או לחץ על המיקרופון..." onkeydown="if(event.key==='Enter') sendMessage()">
-    <button id="sendBtn" onclick="sendMessage()">➤</button>
+
+  <div id="mainArea">
+    <div id="app">
+      <div id="setup">
+        <h2>שיעור חדש</h2>
+        <p class="subtitle">חוג לימוד פרטי עם מספר מורים וירטואליים</p>
+        <p>איזה נושא תרצה ללמוד היום?</p>
+        <input id="topicInput" placeholder="למשל: אלגברה לינארית, מלחמת העולם הראשונה, פוטוסינתזה...">
+
+        <p class="hint">בחר ידנית 2 "תלמידים" שישתתפו בשיעור, או השאר לא-בחור ותן למערכת לבחור אוטומטית לפי הנושא:</p>
+        <div id="poolChoices"></div>
+
+        <button id="startBtn" onclick="startSession()">התחל שיעור</button>
+      </div>
+      <div id="topicBar">
+        <span id="topicBarText"></span>
+        <button id="quizBtn" onclick="openQuiz()">📝 בוחן על השיעור</button>
+      </div>
+      <div id="chat"></div>
+      <div id="attachPreview"></div>
+      <div id="inputBar">
+        <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
+        <button id="attachBtn" title="צרף תמונה (למשל שיעורי בית)">📎</button>
+        <button id="micBtn" title="הקלטה קולית">🎤</button>
+        <input id="messageInput" placeholder="כתוב כאן, או לחץ על המיקרופון..." onkeydown="if(event.key==='Enter') sendMessage()">
+        <button id="sendBtn" onclick="sendMessage()">➤</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -672,6 +757,19 @@ function toggleAgent(key, card) {
   });
 }
 
+function showSetupScreen() {
+  sessionId = null;
+  document.getElementById("setup").style.display = "flex";
+  document.getElementById("chat").style.display = "none";
+  document.getElementById("chat").innerHTML = "";
+  document.getElementById("inputBar").style.display = "none";
+  document.getElementById("topicBar").style.display = "none";
+  document.getElementById("topicInput").value = "";
+  selectedKeys = [];
+  document.querySelectorAll(".pool-card").forEach(c => c.classList.remove("selected", "disabled"));
+  renderSidebarLessons();
+}
+
 function enterChatUI(id, topic, poolNames) {
   sessionId = id;
   document.getElementById("setup").style.display = "none";
@@ -681,6 +779,7 @@ function enterChatUI(id, topic, poolNames) {
   topicBar.style.display = "flex";
   document.getElementById("topicBarText").textContent =
     `נושא: ${topic} · הרכב הכיתה: המורה, ${poolNames.join(", ")}`;
+  renderSidebarLessons();
 }
 
 async function startSession() {
@@ -720,9 +819,9 @@ async function resumeLesson(id) {
   enterChatUI(data.session_id, data.topic, poolNames);
 }
 
-/* ---------- Recent lessons (localStorage, works without login) ---------- */
+/* ---------- Lesson history sidebar (localStorage + server-side when signed in) ---------- */
 const RECENT_LESSONS_STORAGE = "classroom_recent_lessons";
-const RECENT_LESSONS_MAX = 8;
+const RECENT_LESSONS_MAX = 15;
 
 function getRecentLessons() {
   try {
@@ -739,27 +838,41 @@ function saveRecentLesson(id, topic, poolNames) {
   localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
 }
 
-function lessonCard(id, topic, metaText) {
-  const card = document.createElement("div");
-  card.className = "lesson-card";
-  const left = document.createElement("div");
+function sidebarLessonItem(id, topic, metaText) {
+  const item = document.createElement("div");
+  item.className = "sidebar-lesson" + (id === sessionId ? " active" : "");
   const topicDiv = document.createElement("div");
   topicDiv.className = "lesson-topic";
   topicDiv.textContent = topic;
   const metaDiv = document.createElement("div");
   metaDiv.className = "lesson-meta";
   metaDiv.textContent = metaText;
-  left.appendChild(topicDiv);
-  left.appendChild(metaDiv);
-  card.appendChild(left);
-  card.appendChild(document.createTextNode("↩"));
-  card.onclick = () => resumeLesson(id);
-  return card;
+  item.appendChild(topicDiv);
+  item.appendChild(metaDiv);
+  item.onclick = () => resumeLesson(id);
+  return item;
 }
 
-async function renderRecentLessons() {
-  const container = document.getElementById("recentLessons");
+async function renderSidebarLessons() {
+  const container = document.getElementById("sidebarLessons");
   container.innerHTML = "";
+
+  const meRes = await fetch(API_BASE + "/api/me");
+  let serverLessons = [];
+  if (meRes.ok) {
+    const lessonsRes = await fetch(API_BASE + "/api/lessons");
+    if (lessonsRes.ok) serverLessons = (await lessonsRes.json()).lessons;
+  }
+
+  if (serverLessons.length) {
+    const h = document.createElement("h4");
+    h.textContent = "השיעורים שלי";
+    container.appendChild(h);
+    serverLessons.forEach(l => {
+      const d = new Date(l.created_at);
+      container.appendChild(sidebarLessonItem(l.id, l.topic, d.toLocaleDateString("he-IL")));
+    });
+  }
 
   const local = getRecentLessons();
   if (local.length) {
@@ -767,28 +880,18 @@ async function renderRecentLessons() {
     h.textContent = "שיעורים אחרונים בדפדפן הזה";
     container.appendChild(h);
     local.forEach(l => {
-      container.appendChild(lessonCard(l.id, l.topic, (l.poolNames || []).join(", ")));
+      container.appendChild(sidebarLessonItem(l.id, l.topic, (l.poolNames || []).join(", ")));
     });
   }
 
-  const meRes = await fetch(API_BASE + "/api/me");
-  if (meRes.ok) {
-    const lessonsRes = await fetch(API_BASE + "/api/lessons");
-    if (lessonsRes.ok) {
-      const { lessons } = await lessonsRes.json();
-      if (lessons.length) {
-        const h = document.createElement("h4");
-        h.textContent = "השיעורים שלי (מהחשבון שלך)";
-        container.appendChild(h);
-        lessons.forEach(l => {
-          const d = new Date(l.created_at);
-          container.appendChild(lessonCard(l.id, l.topic, d.toLocaleDateString("he-IL")));
-        });
-      }
-    }
+  if (!serverLessons.length && !local.length) {
+    const hint = document.createElement("div");
+    hint.className = "empty-hint";
+    hint.textContent = "עדיין אין שיעורים. התחל שיעור חדש כדי לראות אותו כאן.";
+    container.appendChild(hint);
   }
 }
-renderRecentLessons();
+renderSidebarLessons();
 
 function addMessage(name, color, text, isUser, speak = true, imageDataUrl = null) {
   const chat = document.getElementById("chat");
