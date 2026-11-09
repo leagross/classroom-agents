@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .env
 venv/
+
+# React app (web/) — built on every Render deploy via buildCommand, never committed
+web/node_modules/
+web/dist/

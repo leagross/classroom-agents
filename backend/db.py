@@ -61,6 +61,17 @@ _SCHEMA_STATEMENTS = [
         last_login_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        user_email TEXT PRIMARY KEY,
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
+        plan TEXT NOT NULL DEFAULT 'free',
+        status TEXT NOT NULL DEFAULT 'none',
+        current_period_end TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 
@@ -174,6 +185,75 @@ def upsert_user(email: str, name: str | None, picture: str | None):
             ),
             {"email": email, "name": name, "picture": picture},
         )
+
+
+def get_subscription(user_email: str):
+    if not _engine:
+        return None
+    with _engine.begin() as conn:
+        row = conn.execute(
+            text(
+                "SELECT plan, status, current_period_end, stripe_customer_id, stripe_subscription_id "
+                "FROM subscriptions WHERE user_email = :email"
+            ),
+            {"email": user_email},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def upsert_subscription(
+    user_email: str,
+    plan: str,
+    status: str,
+    stripe_customer_id: str | None = None,
+    stripe_subscription_id: str | None = None,
+    current_period_end=None,
+):
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO subscriptions
+                    (user_email, plan, status, stripe_customer_id, stripe_subscription_id, current_period_end)
+                VALUES
+                    (:email, :plan, :status, :customer_id, :subscription_id, :period_end)
+                ON CONFLICT (user_email) DO UPDATE SET
+                    plan = EXCLUDED.plan,
+                    status = EXCLUDED.status,
+                    stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
+                    stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+                    current_period_end = EXCLUDED.current_period_end,
+                    updated_at = now()
+                """
+            ),
+            {
+                "email": user_email,
+                "plan": plan,
+                "status": status,
+                "customer_id": stripe_customer_id,
+                "subscription_id": stripe_subscription_id,
+                "period_end": current_period_end,
+            },
+        )
+
+
+def count_lessons_this_month(user_email: str) -> int:
+    if not _engine:
+        return 0
+    with _engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS n FROM lessons
+                WHERE user_email = :email
+                  AND created_at >= date_trunc('month', now())
+                """
+            ),
+            {"email": user_email},
+        ).mappings().first()
+        return row["n"] if row else 0
 
 
 def load_messages(lesson_id: str):

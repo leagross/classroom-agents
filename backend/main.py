@@ -7,18 +7,19 @@ import secrets
 import anthropic
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 import auth
+import billing
 import db
 import orchestrator
 import slack_bot
 from agents import POOL, TEACHER
 
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")
 
 app = FastAPI(title="Classroom of Agents")
 
@@ -78,6 +79,7 @@ def list_agents():
 def create_session(req: CreateSessionRequest, request: Request):
     user = request.session.get("user")
     user_email = user["email"] if user else None
+    billing.check_lesson_quota(user_email)
     try:
         session = orchestrator.create_session(req.topic, pool_keys=req.pool_keys, user_email=user_email)
     except ValueError as e:
@@ -221,5 +223,22 @@ def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=No
 
 app.include_router(slack_bot.router)
 app.include_router(auth.router)
+app.include_router(billing.router)
 
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+# Serve the built React app (web/dist). Vite's hashed JS/CSS live under
+# /assets; everything else (including client-side routes like /pricing or
+# /app that have no matching file on disk) falls back to index.html so
+# React Router can take over — this must stay the LAST route registered,
+# since FastAPI matches routes in registration order and every API route
+# above needs to win first.
+app.mount("/assets", StaticFiles(directory=os.path.join(WEB_DIST, "assets")), name="web-assets")
+
+
+@app.get("/favicon.svg")
+def favicon():
+    return FileResponse(os.path.join(WEB_DIST, "favicon.svg"))
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    return FileResponse(os.path.join(WEB_DIST, "index.html"))

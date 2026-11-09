@@ -1,0 +1,42 @@
+.classroom-layout {
+  display: flex;
+  direction: ltr;
+  height: 100vh;
+}
+
+.classroom-main {
+  direction: rtl;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.classroom-topbar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 10px;
+}
+.classroom-topbar .spacer { flex: 1; }
+
+.settings-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1.5px solid var(--border); background: var(--surface);
+  color: var(--muted);
+  cursor: pointer; font-size: 17px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
+}
+
+.classroom-content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+.classroom-content > * {
+  width: 100%;
+  max-width: 760px;
+  background: var(--surface);
+}

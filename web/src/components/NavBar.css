@@ -1,0 +1,39 @@
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 68px;
+}
+
+.navbar-logo {
+  font-family: "Playfair Display", serif;
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.navbar-links a:not(.btn) { color: var(--ink); }
+.navbar-links a:not(.btn):hover { color: var(--p1); }
+
+.navbar-cta { padding: 10px 20px; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .navbar-links { gap: 12px; }
+  .navbar-links a:not(.btn-primary) { display: none; }
+}

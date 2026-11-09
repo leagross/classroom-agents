@@ -1,6 +1,13 @@
 # כיתה של סוכנים
 
-אפליקציית ווב קטנה: צ'אט לימוד עם כמה "דמויות" וירטואליות (מורה + 2 סוכנים מתחלפים + קאמיאו נדיר), לפי התכנון שגובש בשיחה.
+אפליקציית ווב: דף נחיתה שיווקי + דף מחירים/מנויים + צ'אט לימוד עם כמה "דמויות" וירטואליות (מורה + 2 סוכנים מתחלפים + קאמיאו נדיר). הפרונטאנד הוא אפליקציית **React** אמיתית (Vite), מחולקת לקומפוננטות; השרת הוא **FastAPI**.
+
+## ארכיטקטורה
+
+- `web/` — אפליקציית React (Vite + React Router). שלושה "דפים": `/` (נחיתה שיווקית), `/pricing` (מחירים ומנויים), `/app` (הכיתה עצמה — סרגל צד + צ'אט). נבנית ל-`web/dist` בזמן ה-deploy.
+- `backend/` — FastAPI. מגיש את `web/dist` (כולל SPA fallback, כך ש-`/pricing` או `/app` עובדים גם ברענון ישיר של הדפדפן, לא רק בניווט מצד הלקוח), וגם את כל ה-API.
+
+אין build ידני לבצע — `render.yaml` מריץ `npm install && npm run build` כחלק מה-deploy.
 
 ## הרכב הסוכנים
 
@@ -67,6 +74,35 @@
 
 את שני משתני ה-Google יש להזין ידנית ב-Render (Environment), בדיוק כמו משתני ה-Slack.
 
+## מחירים ומנויים (Stripe)
+
+דף `/pricing` מציג שתי תוכניות:
+- **חינמי** — כל התכונות, עד 3 שיעורים חדשים בחודש (דורש התחברות עם Google כדי לדעת למי לשייך את המכסה).
+- **פרימיום — $9.99/חודש** — ללא הגבלת שיעורים.
+
+**חשוב:** זה תשלום אמיתי על **הפלטפורמה**, לא על שימוש ב-AI — כל משתמש עדיין מביא ומשלם על מפתח ה-Anthropic האישי שלו (BYOK). המגבלה היחידה שהתשלום מסיר היא כמות השיעורים.
+
+המגבלה נאכפת **רק** כש-Stripe מוגדר בשרת (`is_configured`) **וגם** המשתמש מחובר — כי בלי שתי אלה אין דרך לדעת למי שייכת המכסה ואין לו איך לשדרג. בלעדיהן האתר עובד בלי שום הגבלה, כמו קודם.
+
+### הגדרת Stripe
+1. פתח חשבון ב-https://dashboard.stripe.com/register.
+2. **Product catalog** → צור מוצר "Premium" עם מחיר חוזר (Recurring) $9.99/חודש → העתק את ה-**Price ID** (מתחיל ב-`price_...`).
+3. **Developers → API keys** → העתק את ה-**Secret key** (מתחיל ב-`sk_live_...` או `sk_test_...` לבדיקות).
+4. **Developers → Webhooks** → **Add endpoint**:
+   - URL: `https://<הכתובת-שלך-ב-Render>/api/billing/webhook`
+   - Events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`
+   - העתק את ה-**Signing secret** (מתחיל ב-`whsec_...`).
+
+### משתני סביבה נדרשים
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_ID_PREMIUM`
+- `APP_BASE_URL` — הכתובת המלאה של האתר (למשל `https://classroom-agents.onrender.com`), משמשת לבניית כתובות ה-redirect אחרי תשלום.
+
+מוגדרים ב-`render.yaml` עם `sync: false`, להזין ידנית ב-Render (Environment).
+
+**מומלץ לבדוק קודם במצב Test** (מפתחות `sk_test_...`/`whsec_...` ממצב הבדיקה של Stripe, עם כרטיסי אשראי לדוגמה) לפני מעבר למצב חי (`sk_live_...`) שגובה כסף אמיתי.
+
 ## סרגל צד — היסטוריית שיעורים
 
 בצד שמאל של האתר (כמו ב-ChatGPT/Claude) יש **סרגל צד קבוע** עם:
@@ -83,12 +119,20 @@
 ## הפעלה מקומית
 
 ```bash
+cd web
+npm install
+npm run build
+```
+
+```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-ואז לפתוח בדפדפן: `http://localhost:8000` — ותזין מפתח Anthropic אישי דרך כפתור ה-🔑 (אין יותר `ANTHROPIC_API_KEY` כללי לצ'אט הווב, ראו "מפתח API אישי" למעלה).
+ואז לפתוח בדפדפן: `http://localhost:8000` — ותזין מפתח Anthropic אישי דרך כפתור ה-🔑 בתוך `/app` (אין `ANTHROPIC_API_KEY` כללי לצ'אט הווב, ראו "מפתח API אישי" למטה).
+
+לפיתוח עם hot-reload של ה-React (בלי build בכל שינוי), אפשר גם להריץ `npm run dev` בתוך `web/` במקביל לשרת — אבל אז קריאות ה-API צריכות proxy/CORS להצביע על `localhost:8000`; לרוב פשוט יותר לבנות (`npm run build`) ולתת ל-FastAPI להגיש הכל מפורט אחד.
 
 ### משתני סביבה אופציונליים
 - `CLASSROOM_MODEL` — מודל לדמויות (ברירת מחדל: `claude-sonnet-5-5`)
@@ -96,14 +140,20 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 ## מבנה הפרויקט
 ```
+web/
+  src/
+    pages/         # Landing, Pricing, Classroom (הדפים)
+    components/    # NavBar, Sidebar, ChatPanel, SetupForm, SettingsModal, QuizModal, AuthArea
+    hooks/         # useSpeechRecognition, useTextToSpeech, useMathRender
+    lib/api.js     # כל קריאות ה-API לשרת
 backend/
   agents.py        # הגדרות הדמויות (system prompts)
   orchestrator.py  # state machine: בחירת מאגר, אימות מורה, סדר תגובות
-  db.py            # התמדה אופציונלית ל-Postgres (שיעורים + הודעות)
-  main.py          # FastAPI, מגיש גם את ה-frontend
-  slack_bot.py      # אינטגרציית Slack (אופציונלי)
-frontend/
-  index.html       # צ'אט + מיקרופון (Web Speech API)
+  db.py            # התמדה אופציונלית ל-Postgres (שיעורים, הודעות, משתמשים, מנויים)
+  billing.py       # אינטגרציית Stripe (מנויים)
+  auth.py          # Google OAuth login
+  main.py          # FastAPI, מגיש גם את web/dist
+  slack_bot.py     # אינטגרציית Slack (אופציונלי)
 ```
 
 ## התמדה (DB)

@@ -1,0 +1,17 @@
+.auth-area {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1.5px solid var(--border); border-radius: 22px;
+  padding: 5px 12px 5px 5px;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
+  font-size: 13px;
+}
+.auth-area img { width: 26px; height: 26px; border-radius: 50%; }
+.sign-in-btn {
+  border: none; background: linear-gradient(90deg, var(--p1), var(--p2));
+  color: #fff; padding: 9px 16px; border-radius: 20px; font-size: 13px;
+  font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
+}
+.logout-btn {
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 12px; text-decoration: underline;
+}

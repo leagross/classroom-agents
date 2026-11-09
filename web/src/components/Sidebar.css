@@ -1,0 +1,68 @@
+.sidebar {
+  direction: rtl;
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow);
+}
+
+.sidebar-header { padding: 18px 16px 12px; border-bottom: 1px solid var(--border); }
+.sidebar-home-link { display: block; margin-bottom: 12px; }
+.sidebar-header h2 { font-size: 19px; font-weight: 700; }
+
+.new-lesson-btn {
+  width: 100%;
+  padding: 11px;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(90deg, var(--p1), var(--p2));
+  color: #fff;
+  cursor: pointer;
+}
+.new-lesson-btn:hover { filter: brightness(1.07); }
+
+.sidebar-lessons {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sidebar-lessons h4 {
+  margin: 10px 4px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.sidebar-empty-hint { margin: 10px 4px; font-size: 12px; color: var(--muted); }
+
+.sidebar-lesson {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 10px; border-radius: 10px; cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: background .12s, border-color .12s;
+}
+.sidebar-lesson:hover { background: var(--surface-2); }
+.sidebar-lesson.active {
+  background: rgba(79, 70, 229, 0.08);
+  border-color: rgba(79, 70, 229, .35);
+}
+.sidebar-lesson .lesson-topic { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-lesson .lesson-meta { font-size: 11px; color: var(--muted); }
+
+@media (max-width: 720px) {
+  .sidebar { width: 86px; }
+  .sidebar-header h2, .sidebar-lesson .lesson-meta { display: none; }
+  .sidebar-header { padding: 12px 6px; }
+  .new-lesson-btn { font-size: 11px; padding: 10px 2px; line-height: 1.3; }
+  .sidebar-lesson .lesson-topic { white-space: normal; font-size: 10px; text-align: center; }
+  .sidebar-lessons h4 { text-align: center; font-size: 9px; }
+}
