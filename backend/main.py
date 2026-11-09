@@ -1,11 +1,13 @@
 """FastAPI backend for the virtual classroom of agents."""
 
+import json
 import os
 import secrets
 
 import anthropic
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -126,6 +128,32 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
             for m in replies
         ]
     }
+
+
+@app.post("/api/message/stream")
+def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Header(default=None)):
+    """Server-Sent Events version of /api/message: each agent's reply is
+    delivered as it's generated (word-by-word for the verified teacher,
+    live model tokens for everyone else) instead of all at once at the end.
+
+    Errors (missing/invalid key, etc.) are delivered as an SSE event with
+    type "error" rather than an HTTP error status — by the time this starts
+    streaming, the 200 response has already begun, so the status code can't
+    change anymore. See orchestrator.handle_user_message_stream for why."""
+    try:
+        session = orchestrator.get_session(req.session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    def event_source():
+        for event in orchestrator.handle_user_message_stream(session, req.text, api_key=x_anthropic_key):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/session/{session_id}/quiz")

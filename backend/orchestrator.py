@@ -3,6 +3,7 @@
 import json
 import os
 import random
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -178,6 +179,35 @@ def _call_agent(agent, transcript: str, extra_instruction: str = "", api_key: st
     return text
 
 
+def _call_agent_stream(agent, transcript: str, api_key: str | None = None):
+    """Like _call_agent, but yields text deltas as they arrive from the model
+    instead of waiting for the full response. Used for agents that don't need
+    verification (everyone except the teacher), where there's no reason to
+    hold text back from the user."""
+    user_content = (
+        f"{transcript}\n\n"
+        f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
+        "כתוב רק את התגובה שלך, בלי לציין את שמך."
+    )
+    with _get_client(api_key).messages.stream(
+        model=MODEL,
+        max_tokens=AGENT_MAX_TOKENS,
+        system=agent.system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
+
+
+def _word_chunks(text: str):
+    """Split already-generated text into word-sized pieces so it can be
+    'replayed' to the client incrementally — used for the teacher's answer,
+    which must be fully generated and verified before any of it is shown."""
+    parts = text.split(" ")
+    for i, part in enumerate(parts):
+        yield part + (" " if i < len(parts) - 1 else "")
+
+
 def _verify_teacher_answer(topic: str, answer: str, api_key: str | None = None) -> tuple[bool, str]:
     verify_prompt = f"נושא: {topic}\n\nתשובת המורה:\n{answer}"
     response = _get_client(api_key).messages.create(
@@ -244,6 +274,82 @@ def handle_user_message(session: Session, user_text: str, api_key: str | None = 
 
     db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
     return replies
+
+
+TEACHER_REPLAY_DELAY = 0.02  # seconds between words when "replaying" the already-verified teacher answer
+
+
+def handle_user_message_stream(session: Session, user_text: str, api_key: str | None = None):
+    """Generator of dict events for incremental (SSE) delivery to the browser:
+    {"type": "start", "key", "name", "color"} / {"type": "token", "text"} /
+    {"type": "end"} per agent reply, then a final {"type": "done"}.
+
+    Mirrors handle_user_message's logic exactly (teacher verification loop,
+    pool rotation, jester cameo, DB writes) — this is the streaming twin of
+    that function, not a separate code path with its own rules.
+
+    The teacher's answer can't be streamed live token-by-token: it has to be
+    fully generated and pass the silent verification/retry loop before any
+    of it is safe to show (an answer that gets corrected mid-stream can't be
+    un-said). So its already-complete, already-validated text is "replayed"
+    to the client word by word instead — still a real incremental HTTP
+    stream, just not a live model stream. Every other agent streams live.
+
+    Any error (missing/invalid key, model/network failure) is caught and
+    emitted as a {"type": "error"} event rather than raised, because by the
+    time this generator runs the HTTP 200 + SSE headers have already been
+    sent — an exception here can't change the status code anymore.
+    """
+    try:
+        _remember(session, ChatMessage("user", "את/ה", "#111827", user_text))
+        session.round_count += 1
+
+        # --- Teacher: verify silently, then replay the validated text ---
+        teacher_text = _get_validated_teacher_reply(session, api_key=api_key)
+        yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
+        for chunk in _word_chunks(teacher_text):
+            yield {"type": "token", "text": chunk}
+            time.sleep(TEACHER_REPLAY_DELAY)
+        yield {"type": "end"}
+        teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
+        _remember(session, teacher_msg)
+
+        # --- Pool agent: live model stream ---
+        pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
+        session.pool_turn_index += 1
+        yield {"type": "start", "key": pool_agent.key, "name": pool_agent.display_name, "color": pool_agent.color}
+        parts = []
+        for chunk in _call_agent_stream(pool_agent, session.transcript_text(), api_key=api_key):
+            parts.append(chunk)
+            yield {"type": "token", "text": chunk}
+        pool_text = "".join(parts).strip() or "(לא הצלחתי לנסח תגובה הפעם, נסה לנסח את השאלה מעט אחרת.)"
+        yield {"type": "end"}
+        pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
+        _remember(session, pool_msg)
+
+        # --- Jester cameo: live model stream, rare rounds only ---
+        if session.round_count >= session.next_jester_round:
+            yield {"type": "start", "key": JESTER.key, "name": JESTER.display_name, "color": JESTER.color}
+            parts = []
+            for chunk in _call_agent_stream(JESTER, session.transcript_text(), api_key=api_key):
+                parts.append(chunk)
+                yield {"type": "token", "text": chunk}
+            jester_text = "".join(parts).strip() or "..."
+            yield {"type": "end"}
+            jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
+            _remember(session, jester_msg)
+            session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
+
+        db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
+        yield {"type": "done"}
+
+    except MissingApiKeyError:
+        yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
+    except anthropic.AuthenticationError:
+        yield {"type": "error", "detail": "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."}
+    except Exception as e:
+        print(f"[handle_user_message_stream] unexpected error: {e!r}")
+        yield {"type": "error", "detail": "משהו השתבש בצד השרת. נסה שוב."}
 
 
 QUIZ_MODEL = os.environ.get("CLASSROOM_QUIZ_MODEL", MODEL)

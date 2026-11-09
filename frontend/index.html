@@ -797,6 +797,26 @@ function addTyping(name, color) {
   return row;
 }
 
+function addStreamingMessage(name, color) {
+  const chat = document.getElementById("chat");
+  const row = document.createElement("div");
+  row.className = "msg-row";
+  const bubble = document.createElement("div");
+  bubble.className = "msg agent";
+  bubble.style.background = color;
+  const nameDiv = document.createElement("div");
+  nameDiv.className = "name";
+  nameDiv.textContent = name;
+  const textDiv = document.createElement("div");
+  bubble.appendChild(nameDiv);
+  bubble.appendChild(textDiv);
+  row.appendChild(avatarEl(name, color, true));
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+  return textDiv;
+}
+
 async function sendMessage() {
   const input = document.getElementById("messageInput");
   const text = input.value.trim();
@@ -808,30 +828,68 @@ async function sendMessage() {
   const apiKey = getStoredApiKey();
   if (apiKey) headers["X-Anthropic-Key"] = apiKey;
 
-  const res = await fetch(API_BASE + "/api/message", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({session_id: sessionId, text})
-  });
+  // Shown until the first SSE "start" event arrives (the teacher's answer
+  // must be fully generated + verified before anything streams, so there's
+  // a real gap here with nothing to show yet).
+  const waitingRow = addTyping("", "#9ca3af");
 
-  if (res.status === 401) {
-    const err = await res.json().catch(() => ({}));
-    alert(err.detail || "מפתח ה-API האישי שהזנת לא תקין. בדוק אותו בהגדרות (🔑).");
-    openSettings();
+  let res;
+  try {
+    res = await fetch(API_BASE + "/api/message/stream", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ session_id: sessionId, text }),
+    });
+  } catch (e) {
+    waitingRow.remove();
+    alert("שגיאת רשת. נסה שוב.");
     return;
   }
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
+    waitingRow.remove();
     alert("משהו השתבש בשליחת ההודעה. נסה שוב.");
     return;
   }
 
-  const data = await res.json();
-  for (const reply of data.replies) {
-    const typingRow = addTyping(reply.agent, reply.color);
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 400));
-    typingRow.remove();
-    addMessage(reply.agent, reply.color, reply.text, false);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentTextEl = null;
+  let currentFullText = "";
+  let waitingRemoved = false;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop();
+
+    for (const raw of events) {
+      const line = raw.trim();
+      if (!line.startsWith("data:")) continue;
+      let evt;
+      try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+
+      if (!waitingRemoved) { waitingRow.remove(); waitingRemoved = true; }
+
+      if (evt.type === "start") {
+        currentTextEl = addStreamingMessage(evt.name, evt.color);
+        currentFullText = "";
+      } else if (evt.type === "token" && currentTextEl) {
+        currentFullText += evt.text;
+        currentTextEl.textContent = currentFullText;
+        document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+      } else if (evt.type === "end") {
+        if (currentTextEl) window.speakReply(currentFullText);
+        currentTextEl = null;
+      } else if (evt.type === "error") {
+        alert(evt.detail || "שגיאה בשליחת ההודעה.");
+        openSettings();
+      }
+    }
   }
+  if (!waitingRemoved) waitingRow.remove();
 }
 
 /* ---------- Microphone (Web Speech API) ---------- */
