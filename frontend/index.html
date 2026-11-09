@@ -226,11 +226,20 @@
     border-bottom: 1px solid var(--border);
     background: var(--bg-1);
   }
+  #topicBarText { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #homeBtn {
+    border: none; background: var(--surface-2); color: var(--muted);
+    width: 30px; height: 30px; border-radius: 50%; font-size: 14px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; border: 1.5px solid var(--border);
+  }
+  #homeBtn:hover { border-color: rgba(79,70,229,.4); color: var(--p1); }
   #quizBtn {
     border: none; background: linear-gradient(90deg, var(--p1), var(--p2));
     color: #fff; padding: 7px 14px; border-radius: 16px; font-size: 12px;
     font-weight: 700; cursor: pointer; white-space: nowrap;
     box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
+    flex-shrink: 0;
   }
   #quizBtn:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -532,6 +541,7 @@
         <button id="startBtn" onclick="startSession()">התחל שיעור</button>
       </div>
       <div id="topicBar">
+        <button id="homeBtn" onclick="showSetupScreen()" title="חזרה לדף הבית">🏠</button>
         <span id="topicBarText"></span>
         <button id="quizBtn" onclick="openQuiz()">📝 בוחן על השיעור</button>
       </div>
