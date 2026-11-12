@@ -10,6 +10,7 @@ everything here becomes a no-op and the app falls back to pure in-memory
 sessions, exactly as before.
 """
 
+import json
 import os
 
 from sqlalchemy import create_engine, text
@@ -37,9 +38,13 @@ _SCHEMA_STATEMENTS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # Older deployments created the table before user_email existed.
+    # Older deployments created the table before these columns existed.
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS user_email TEXT",
     "CREATE INDEX IF NOT EXISTS idx_lessons_user_email ON lessons(user_email)",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS plan TEXT",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS activity_index INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS autonomous_turns_used INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS awaiting_user BOOLEAN NOT NULL DEFAULT true",
     """
     CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -87,18 +92,28 @@ def init_db():
             conn.execute(text(stmt))
 
 
-def insert_lesson(lesson_id: str, topic: str, pool_keys: str, next_jester_round: int, user_email: str | None = None):
+def insert_lesson(
+    lesson_id: str,
+    topic: str,
+    pool_keys: str,
+    next_jester_round: int,
+    user_email: str | None = None,
+    plan: dict | None = None,
+    awaiting_user: bool = True,
+):
     if not _engine:
         return
     with _engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO lessons (id, topic, pool_keys, next_jester_round, user_email) "
-                "VALUES (:id, :topic, :pool_keys, :njr, :user_email)"
+                "INSERT INTO lessons (id, topic, pool_keys, next_jester_round, user_email, plan, awaiting_user) "
+                "VALUES (:id, :topic, :pool_keys, :njr, :user_email, :plan, :awaiting_user)"
             ),
             {
                 "id": lesson_id, "topic": topic, "pool_keys": pool_keys,
                 "njr": next_jester_round, "user_email": user_email,
+                "plan": json.dumps(plan) if plan else None,
+                "awaiting_user": awaiting_user,
             },
         )
 
@@ -113,6 +128,19 @@ def update_lesson_state(lesson_id: str, round_count: int, pool_turn_index: int, 
                 "next_jester_round = :njr WHERE id = :id"
             ),
             {"rc": round_count, "pti": pool_turn_index, "njr": next_jester_round, "id": lesson_id},
+        )
+
+
+def update_lesson_plan_state(lesson_id: str, activity_index: int, autonomous_turns_used: int, awaiting_user: bool):
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE lessons SET activity_index = :ai, autonomous_turns_used = :atu, "
+                "awaiting_user = :au WHERE id = :id"
+            ),
+            {"ai": activity_index, "atu": autonomous_turns_used, "au": awaiting_user, "id": lesson_id},
         )
 
 
@@ -159,11 +187,18 @@ def load_lesson(lesson_id: str):
         return None
     with _engine.begin() as conn:
         row = conn.execute(
-            text("SELECT topic, pool_keys, round_count, pool_turn_index, next_jester_round "
-                 "FROM lessons WHERE id = :id"),
+            text(
+                "SELECT topic, pool_keys, round_count, pool_turn_index, next_jester_round, "
+                "plan, activity_index, autonomous_turns_used, awaiting_user "
+                "FROM lessons WHERE id = :id"
+            ),
             {"id": lesson_id},
         ).mappings().first()
-        return dict(row) if row else None
+        if not row:
+            return None
+        lesson = dict(row)
+        lesson["plan"] = json.loads(lesson["plan"]) if lesson.get("plan") else None
+        return lesson
 
 
 def upsert_user(email: str, name: str | None, picture: str | None):

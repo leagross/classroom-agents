@@ -26,6 +26,24 @@
 #startBtn:disabled { background: #d1d5db; color: #9ca3af; cursor: not-allowed; filter: none; box-shadow: none; }
 
 .hint { font-size: 13px; color: var(--muted); }
+.setup-error { color: #dc2626; font-size: 13px; }
+
+.session-type-choice { display: flex; gap: 10px; }
+.session-type-btn {
+  flex: 1;
+  text-align: right;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, background .15s;
+}
+.session-type-btn:hover { border-color: rgba(147,51,234,.4); }
+.session-type-btn.selected { border-color: var(--p1); background: rgba(79,70,229,.06); }
+.session-type-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.session-type-desc { font-size: 12px; color: var(--muted); }
 
 .pool-choices { display: flex; flex-wrap: wrap; gap: 10px; }
 .pool-card {

@@ -39,6 +39,12 @@ app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET"
 class CreateSessionRequest(BaseModel):
     topic: str
     pool_keys: list[str] | None = None  # exactly 2 keys from POOL, or None for auto-selection
+    plan: dict | None = None  # an approved lesson plan from POST /api/lesson-plan; omit for a "review" session
+
+
+class LessonPlanRequest(BaseModel):
+    topic: str
+    pool_keys: list[str] | None = None
 
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -75,19 +81,50 @@ def list_agents():
     }
 
 
+@app.post("/api/lesson-plan")
+def create_lesson_plan(req: LessonPlanRequest, x_anthropic_key: str | None = Header(default=None)):
+    """Preview-only: generates a lesson plan for the user to approve or
+    regenerate before any session/DB row exists. Creating the actual session
+    (POST /api/session) with the approved plan attached is a separate step."""
+    try:
+        pool = orchestrator.resolve_pool(req.topic, req.pool_keys)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        plan = orchestrator.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key)
+    except orchestrator.MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
+    except orchestrator.LessonPlanGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"plan": plan, "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in pool]}
+
+
 @app.post("/api/session")
 def create_session(req: CreateSessionRequest, request: Request):
     user = request.session.get("user")
     user_email = user["email"] if user else None
     billing.check_lesson_quota(user_email)
     try:
-        session = orchestrator.create_session(req.topic, pool_keys=req.pool_keys, user_email=user_email)
+        session = orchestrator.create_session(
+            req.topic, pool_keys=req.pool_keys, user_email=user_email, plan=req.plan
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {
         "session_id": session.id,
         "topic": session.topic,
         "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in session.pool],
+        "plan": session.plan,
+        "awaiting_user": session.awaiting_user,
     }
 
 
@@ -115,6 +152,9 @@ def get_session(session_id: str):
             }
             for m in session.history
         ],
+        "plan": session.plan,
+        "activity_index": session.activity_index,
+        "awaiting_user": session.awaiting_user,
     }
 
 
@@ -185,6 +225,27 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
             session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
         )
         for event in stream:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/session/{session_id}/continue/stream")
+def continue_lesson_stream(session_id: str, x_anthropic_key: str | None = Header(default=None)):
+    """SSE, same event shape as /api/message/stream, but with no new user
+    text — produces exactly one autonomous 'beat' of a plan-driven lesson.
+    See orchestrator.advance_lesson_stream for the state machine."""
+    try:
+        session = orchestrator.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    def event_source():
+        for event in orchestrator.advance_lesson_stream(session, api_key=x_anthropic_key):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

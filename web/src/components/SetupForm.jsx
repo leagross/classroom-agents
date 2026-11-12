@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import { getAgents } from "../lib/api";
+import { getAgents, generateLessonPlan } from "../lib/api";
+import LessonPlanPreview from "./LessonPlanPreview";
 import "./SetupForm.css";
 
 export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
   const [pool, setPool] = useState([]);
   const [topic, setTopic] = useState("");
   const [selected, setSelected] = useState([]);
+  const [sessionType, setSessionType] = useState("lesson"); // "lesson" | "review"
+  const [preview, setPreview] = useState(null); // { plan, poolKeys }
+  const [loadingPlan, setLoadingPlan] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     getAgents().then((data) => setPool(data.pool));
@@ -23,16 +28,69 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
     return name.replace(/^ה/, "").slice(0, 2);
   }
 
-  function handleStart() {
+  async function handlePrimaryAction() {
     if (!hasApiKey) { onOpenSettings(); return; }
     if (!topic.trim()) return;
-    onStart(topic.trim(), selected.length === 2 ? selected : null);
+
+    if (sessionType === "review") {
+      onStart(topic.trim(), selected.length === 2 ? selected : null, null);
+      return;
+    }
+
+    await buildPreview();
+  }
+
+  async function buildPreview() {
+    setError("");
+    setLoadingPlan(true);
+    try {
+      const poolKeysArg = selected.length === 2 ? selected : null;
+      const { plan, pool: resolvedPool } = await generateLessonPlan(topic.trim(), poolKeysArg);
+      setPreview({ plan, poolKeys: resolvedPool.map((a) => a.key) });
+    } catch (e) {
+      setError(e.message || "לא הצלחתי לבנות מערך שיעור. נסה שוב.");
+    } finally {
+      setLoadingPlan(false);
+    }
+  }
+
+  if (preview) {
+    return (
+      <LessonPlanPreview
+        topic={topic.trim()}
+        plan={preview.plan}
+        regenerating={loadingPlan}
+        onStart={() => onStart(topic.trim(), preview.poolKeys, preview.plan)}
+        onRegenerate={buildPreview}
+        onCancel={() => setPreview(null)}
+      />
+    );
   }
 
   return (
     <div className="setup">
       <h2>שיעור חדש</h2>
       <p className="subtitle">חוג לימוד פרטי עם מספר מורים וירטואליים</p>
+
+      <div className="session-type-choice">
+        <button
+          type="button"
+          className={"session-type-btn" + (sessionType === "lesson" ? " selected" : "")}
+          onClick={() => setSessionType("lesson")}
+        >
+          <div className="session-type-title">שיעור חדש</div>
+          <div className="session-type-desc">נבנה מערך שיעור (מטרות + פעילויות) לפני שמתחילים</div>
+        </button>
+        <button
+          type="button"
+          className={"session-type-btn" + (sessionType === "review" ? " selected" : "")}
+          onClick={() => setSessionType("review")}
+        >
+          <div className="session-type-title">חזרה על חומר</div>
+          <div className="session-type-desc">שיחה חופשית, בלי מערך מוכן מראש</div>
+        </button>
+      </div>
+
       <p>איזה נושא תרצה ללמוד היום?</p>
       <input
         placeholder="למשל: אלגברה לינארית, מלחמת העולם הראשונה, פוטוסינתזה..."
@@ -58,8 +116,10 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
         })}
       </div>
 
-      <button id="startBtn" className="btn btn-primary" disabled={!hasApiKey} onClick={handleStart}>
-        התחל שיעור
+      {error && <p className="setup-error">{error}</p>}
+
+      <button id="startBtn" className="btn btn-primary" disabled={!hasApiKey || loadingPlan} onClick={handlePrimaryAction}>
+        {loadingPlan ? "בונה מערך שיעור..." : sessionType === "lesson" ? "הכן מערך שיעור" : "התחל שיעור"}
       </button>
     </div>
   );

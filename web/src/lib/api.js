@@ -26,9 +26,10 @@ export async function getAgents() {
   return res.json();
 }
 
-export async function createSession(topic, poolKeys) {
+export async function createSession(topic, poolKeys, plan) {
   const body = { topic };
   if (poolKeys && poolKeys.length === 2) body.pool_keys = poolKeys;
+  if (plan) body.plan = plan;
   const res = await fetch(API_BASE + "/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,6 +37,22 @@ export async function createSession(topic, poolKeys) {
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "session creation failed");
   return res.json();
+}
+
+/**
+ * Generates a lesson plan preview — no session/DB row is created yet.
+ */
+export async function generateLessonPlan(topic, poolKeys) {
+  const body = { topic };
+  if (poolKeys && poolKeys.length === 2) body.pool_keys = poolKeys;
+  const res = await fetch(API_BASE + "/api/lesson-plan", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "lesson plan generation failed");
+  return data; // { plan, pool }
 }
 
 export async function getSession(id) {
@@ -76,20 +93,18 @@ export async function fetchQuiz(sessionId) {
 }
 
 /**
- * Sends a message and streams the reply via Server-Sent Events.
- * onEvent receives {type: "start"|"token"|"end"|"error", ...}.
+ * Shared SSE consumer for any POST endpoint that streams
+ * {type: "start"|"token"|"end"|"done"|"error", ...} events, one per line
+ * prefixed "data: ". Used by both sendMessageStream and continueLessonStream.
  */
-export async function sendMessageStream(sessionId, text, image, onEvent) {
-  const body = { session_id: sessionId, text };
-  if (image) body.image = image;
-
-  const res = await fetch(API_BASE + "/api/message/stream", {
+async function _streamSSE(url, body, onEvent, genericErrorDetail) {
+  const res = await fetch(API_BASE + url, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
-    onEvent({ type: "error", detail: "משהו השתבש בשליחת ההודעה. נסה שוב." });
+    onEvent({ type: "error", detail: genericErrorDetail });
     return;
   }
 
@@ -111,6 +126,30 @@ export async function sendMessageStream(sessionId, text, image, onEvent) {
       } catch (e) { /* ignore malformed chunk */ }
     }
   }
+}
+
+/**
+ * Sends a message and streams the reply via Server-Sent Events.
+ * onEvent receives {type: "start"|"token"|"end"|"done"|"error", ...}.
+ */
+export async function sendMessageStream(sessionId, text, image, onEvent) {
+  const body = { session_id: sessionId, text };
+  if (image) body.image = image;
+  await _streamSSE("/api/message/stream", body, onEvent, "משהו השתבש בשליחת ההודעה. נסה שוב.");
+}
+
+/**
+ * Produces exactly one autonomous "beat" of a plan-driven lesson (no new
+ * user text). onEvent receives the same event shape as sendMessageStream;
+ * its final "done" event carries {continue, awaiting_user, activity_index}.
+ */
+export async function continueLessonStream(sessionId, onEvent) {
+  await _streamSSE(
+    "/api/session/" + sessionId + "/continue/stream",
+    {},
+    onEvent,
+    "משהו השתבש בהמשך השיעור האוטומטי."
+  );
 }
 
 /* ---------- Billing (subscriptions) ---------- */

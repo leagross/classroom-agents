@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessageStream } from "../lib/api";
+import { sendMessageStream, continueLessonStream } from "../lib/api";
 import useSpeechRecognition from "../hooks/useSpeechRecognition";
 import useTextToSpeech from "../hooks/useTextToSpeech";
 import renderMath from "../hooks/useMathRender";
@@ -7,6 +7,8 @@ import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const AUTO_CONTINUE_DELAY_MS = 1500;
+const MAX_AUTO_CONTINUE_ITERATIONS = 8; // safety cap against a runaway loop
 
 function initials(name) {
   return (name || "").replace(/^ה/, "").slice(0, 2);
@@ -20,20 +22,35 @@ function Avatar({ name, color, small }) {
   );
 }
 
-export default function ChatPanel({ sessionId, topic, poolNames, initialHistory, onHome, onOpenQuiz, onApiKeyError }) {
+export default function ChatPanel({
+  sessionId, topic, poolNames, initialHistory,
+  plan, initialActivityIndex, initialAwaitingUser,
+  onHome, onOpenQuiz, onApiKeyError,
+}) {
   const [messages, setMessages] = useState(initialHistory || []);
   const [input, setInput] = useState("");
   const [pendingImage, setPendingImage] = useState(null);
   const [streaming, setStreaming] = useState(null); // {name, color, text}
   const [waiting, setWaiting] = useState(false);
+  const [activityIndex, setActivityIndex] = useState(initialActivityIndex || 0);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
+  const autoPlayTokenRef = useRef({ cancelled: true });
   const tts = useTextToSpeech();
 
   useEffect(() => {
     setMessages(initialHistory || []);
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+    setActivityIndex(initialActivityIndex || 0);
+    autoPlayTokenRef.current.cancelled = true;
+    const token = { cancelled: false };
+    autoPlayTokenRef.current = token;
+    if (plan && !initialAwaitingUser) {
+      scheduleAutoPlay(token, 0);
+    }
+    return () => { token.cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -47,6 +64,49 @@ export default function ChatPanel({ sessionId, topic, poolNames, initialHistory,
     (transcript) => setInput((prev) => (prev ? prev + " " : "") + transcript),
     () => tts.cancel()
   );
+
+  /** Wires a streaming call's events to the chat UI, returns the final "done" event. */
+  async function runStream(callStreamFn) {
+    let accumulated = "";
+    let current = { name: "", color: "" };
+    let doneEvent = null;
+    await callStreamFn((evt) => {
+      setWaiting(false);
+      if (evt.type === "start") {
+        accumulated = "";
+        current = { name: evt.name, color: evt.color };
+        setStreaming({ name: evt.name, color: evt.color, text: "" });
+      } else if (evt.type === "token") {
+        accumulated += evt.text;
+        setStreaming((prev) => (prev ? { ...prev, text: accumulated } : prev));
+      } else if (evt.type === "end") {
+        setMessages((prev) => [...prev, { agent: current.name, key: "assistant", color: current.color, text: accumulated, isUser: false }]);
+        setStreaming(null);
+        tts.speak(accumulated);
+      } else if (evt.type === "done") {
+        doneEvent = evt;
+      } else if (evt.type === "error") {
+        setStreaming(null);
+        if (evt.detail && evt.detail.includes("מפתח")) onApiKeyError(evt.detail);
+        else alert(evt.detail || "שגיאה.");
+        doneEvent = { type: "error" };
+      }
+    });
+    return doneEvent;
+  }
+
+  function scheduleAutoPlay(token, iteration) {
+    if (!plan || token.cancelled || iteration >= MAX_AUTO_CONTINUE_ITERATIONS) return;
+    setTimeout(() => runAutoPlayStep(token, iteration), AUTO_CONTINUE_DELAY_MS);
+  }
+
+  async function runAutoPlayStep(token, iteration) {
+    if (token.cancelled) return;
+    const doneEvent = await runStream((onEvent) => continueLessonStream(sessionId, onEvent));
+    if (token.cancelled || !doneEvent) return;
+    if (typeof doneEvent.activity_index === "number") setActivityIndex(doneEvent.activity_index);
+    if (doneEvent.continue) scheduleAutoPlay(token, iteration + 1);
+  }
 
   function onFileChange(e) {
     const file = e.target.files[0];
@@ -72,6 +132,11 @@ export default function ChatPanel({ sessionId, topic, poolNames, initialHistory,
     const text = input.trim();
     if (!text && !pendingImage) return;
 
+    // The user taking their turn always wins over a scheduled autonomous beat.
+    autoPlayTokenRef.current.cancelled = true;
+    const myToken = { cancelled: false };
+    autoPlayTokenRef.current = myToken;
+
     const userMsg = {
       agent: "את/ה",
       key: "user",
@@ -86,43 +151,25 @@ export default function ChatPanel({ sessionId, topic, poolNames, initialHistory,
     setPendingImage(null);
     setWaiting(true);
 
-    let accumulated = "";
-    let current = { name: "", color: "" };
-    await sendMessageStream(sessionId, text || "(התלמיד צירף תמונה בלי טקסט נוסף)", image, (evt) => {
-      setWaiting(false);
-      if (evt.type === "start") {
-        accumulated = "";
-        current = { name: evt.name, color: evt.color };
-        setStreaming({ name: evt.name, color: evt.color, text: "" });
-      } else if (evt.type === "token") {
-        accumulated += evt.text;
-        setStreaming((prev) => (prev ? { ...prev, text: accumulated } : prev));
-      } else if (evt.type === "end") {
-        setMessages((prev) => [...prev, { agent: current.name, key: "assistant", color: current.color, text: accumulated, isUser: false }]);
-        setStreaming(null);
-        tts.speak(accumulated);
-      } else if (evt.type === "error") {
-        setStreaming(null);
-        if (evt.detail && evt.detail.includes("מפתח")) onApiKeyError(evt.detail);
-        else alert(evt.detail || "שגיאה בשליחת ההודעה.");
-      }
-    });
+    const doneEvent = await runStream((onEvent) =>
+      sendMessageStream(sessionId, text || "(התלמיד צירף תמונה בלי טקסט נוסף)", image, onEvent)
+    );
     setWaiting(false);
+
+    if (doneEvent && typeof doneEvent.activity_index === "number") setActivityIndex(doneEvent.activity_index);
+    if (doneEvent && doneEvent.continue) scheduleAutoPlay(myToken, 0);
   }
 
-  useEffect(() => {
-    if (streamingElRef.current && streaming) {
-      // live-stream text isn't math-rendered mid-flight (unbalanced LaTeX risk);
-      // only the scroll position needs to track it.
-      chatRef.current && (chatRef.current.scrollTop = chatRef.current.scrollHeight);
-    }
-  }, [streaming]);
+  const currentActivity = plan?.activities?.[activityIndex];
 
   return (
     <div className="chat-panel">
       <div className="topic-bar">
         <button className="home-btn" onClick={onHome} title="חזרה לדף הבית">🏠</button>
-        <span className="topic-text">נושא: {topic} · הרכב הכיתה: המורה, {(poolNames || []).join(", ")}</span>
+        <span className="topic-text">
+          נושא: {topic} · הרכב הכיתה: המורה, {(poolNames || []).join(", ")}
+          {plan && currentActivity && ` · שלב ${Math.min(activityIndex + 1, plan.activities.length)}/${plan.activities.length}: ${currentActivity.title}`}
+        </span>
         <button className="quiz-btn" onClick={onOpenQuiz}>📝 בוחן על השיעור</button>
       </div>
 

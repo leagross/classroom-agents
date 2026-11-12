@@ -15,6 +15,7 @@ from agents import (
     CONNECTOR,
     DEEP_DIVER,
     JESTER,
+    LESSON_PLAN_SYSTEM_PROMPT,
     POOL,
     QUIZ_SYSTEM_PROMPT,
     SIMPLIFIER,
@@ -66,6 +67,12 @@ class Session:
     round_count: int = 0
     next_jester_round: int = field(default_factory=lambda: random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX))
     pool_turn_index: int = 0
+    # Lesson plan (optional — only set for a "new lesson", never for "review"
+    # sessions, which behave exactly as before this feature existed).
+    plan: dict | None = None
+    activity_index: int = 0
+    autonomous_turns_used: int = 0
+    awaiting_user: bool = True
 
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]
@@ -103,20 +110,31 @@ def choose_pool(topic: str):
     return random.sample(POOL, 2)
 
 
-def create_session(topic: str, pool_keys: list | None = None, user_email: str | None = None) -> Session:
+def resolve_pool(topic: str, pool_keys: list | None = None) -> list:
     if pool_keys:
         pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY and AGENTS_BY_KEY[k] in POOL]
         if len(pool) != 2:
             raise ValueError("pool_keys must name exactly 2 valid pool agents")
-    else:
-        pool = choose_pool(topic)
-    session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool)
+        return pool
+    return choose_pool(topic)
+
+
+def create_session(
+    topic: str, pool_keys: list | None = None, user_email: str | None = None, plan: dict | None = None
+) -> Session:
+    pool = resolve_pool(topic, pool_keys)
+    # A lesson with a plan starts "mid-activity" (not yet waiting on the
+    # student) so the classroom can open on its own, like a teacher who
+    # walks in and starts teaching instead of standing there silently.
+    session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool, plan=plan, awaiting_user=not plan)
     SESSIONS[session.id] = session
     db.insert_lesson(
         session.id, session.topic,
         ",".join(a.key for a in session.pool),
         session.next_jester_round,
         user_email=user_email,
+        plan=plan,
+        awaiting_user=session.awaiting_user,
     )
     return session
 
@@ -140,6 +158,10 @@ def get_session(session_id: str) -> Session:
         round_count=lesson["round_count"],
         pool_turn_index=lesson["pool_turn_index"],
         next_jester_round=lesson["next_jester_round"],
+        plan=lesson.get("plan"),
+        activity_index=lesson.get("activity_index", 0),
+        autonomous_turns_used=lesson.get("autonomous_turns_used", 0),
+        awaiting_user=lesson.get("awaiting_user", True),
     )
     for row in db.load_messages(session_id):
         session.history.append(
@@ -373,7 +395,29 @@ def handle_user_message_stream(
             session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
 
         db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
-        yield {"type": "done"}
+
+        if session.plan:
+            # The user's reply answers the current activity's checkpoint
+            # question, so move on to the next activity and let the
+            # classroom resume on its own — the frontend keeps calling
+            # /continue/stream while continue=true. If the plan is
+            # exhausted, the lesson just keeps going free-form from here.
+            activities = session.plan.get("activities", [])
+            session.activity_index += 1
+            session.autonomous_turns_used = 0
+            more_activities_left = session.activity_index < len(activities)
+            session.awaiting_user = not more_activities_left
+            db.update_lesson_plan_state(
+                session.id, session.activity_index, session.autonomous_turns_used, session.awaiting_user
+            )
+            yield {
+                "type": "done",
+                "continue": more_activities_left,
+                "awaiting_user": session.awaiting_user,
+                "activity_index": session.activity_index,
+            }
+        else:
+            yield {"type": "done"}
 
     except MissingApiKeyError:
         yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
@@ -393,10 +437,11 @@ class QuizGenerationError(Exception):
     pass
 
 
-def _extract_json_array(raw: str):
+def _extract_json(raw: str):
     """The model is instructed to return raw JSON, but models occasionally
     wrap it in a ```json code fence anyway — strip that defensively before
-    parsing instead of failing the whole quiz over a formatting slip."""
+    parsing instead of failing over a formatting slip. Works for a JSON
+    array (quiz) or a JSON object (lesson plan) alike."""
     text = raw.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -418,7 +463,7 @@ def generate_quiz(session: Session, api_key: str | None = None) -> list:
         )
         raw = "".join(b.text for b in response.content if b.type == "text").strip()
         try:
-            questions = _extract_json_array(raw)
+            questions = _extract_json(raw)
             if not isinstance(questions, list) or not questions:
                 raise ValueError("expected a non-empty JSON array")
             for q in questions:
@@ -432,3 +477,124 @@ def generate_quiz(session: Session, api_key: str | None = None) -> list:
             print(f"[generate_quiz] malformed quiz JSON, retrying: {e}; raw={raw[:300]!r}")
 
     raise QuizGenerationError(f"לא הצלחתי לבנות בוחן תקין: {last_error}")
+
+
+LESSON_PLAN_MODEL = os.environ.get("CLASSROOM_LESSON_PLAN_MODEL", MODEL)
+LESSON_PLAN_MAX_TOKENS = 1500
+LESSON_PLAN_MAX_RETRIES = 2
+DEFAULT_AUTONOMOUS_EXCHANGES = 1
+
+
+class LessonPlanGenerationError(Exception):
+    pass
+
+
+def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> dict:
+    """A lesson plan is generated once, as a preview the user can approve or
+    regenerate, before any session/DB row exists — same spirit as
+    generate_quiz, just earlier in the lifecycle and shaped as an object
+    instead of an array."""
+    pool_names = ", ".join(a.display_name for a in pool)
+    user_content = f"נושא השיעור: {topic}\nהתלמידים שישתתפו: {pool_names}"
+    last_error = None
+    for _ in range(LESSON_PLAN_MAX_RETRIES):
+        response = _get_client(api_key).messages.create(
+            model=LESSON_PLAN_MODEL,
+            max_tokens=LESSON_PLAN_MAX_TOKENS,
+            system=LESSON_PLAN_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        try:
+            plan = _extract_json(raw)
+            if not isinstance(plan, dict):
+                raise ValueError("expected a JSON object")
+            if not (isinstance(plan.get("goals"), list) and plan["goals"]):
+                raise ValueError("missing goals")
+            activities = plan.get("activities")
+            if not (isinstance(activities, list) and activities):
+                raise ValueError("missing activities")
+            for a in activities:
+                if not (isinstance(a.get("title"), str) and a["title"]):
+                    raise ValueError("activity missing title")
+                if not isinstance(a.get("checkpoint_question"), str):
+                    raise ValueError("activity missing checkpoint_question")
+                raw_exchanges = a.get("autonomous_exchanges")
+                a["autonomous_exchanges"] = int(raw_exchanges) if raw_exchanges is not None else DEFAULT_AUTONOMOUS_EXCHANGES
+            return plan
+        except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
+            last_error = e
+            print(f"[generate_lesson_plan] malformed plan JSON, retrying: {e}; raw={raw[:300]!r}")
+
+    raise LessonPlanGenerationError(f"לא הצלחתי לבנות מערך שיעור תקין: {last_error}")
+
+
+def advance_lesson_stream(session: Session, api_key: str | None = None):
+    """Generator (same SSE event shape as handle_user_message_stream) that
+    produces exactly ONE autonomous 'beat' of a plan-driven lesson, without
+    any new user message: either a pool-agent reaction (the classroom
+    talking amongst itself) or, once the current activity's autonomous
+    budget is spent, the teacher's pre-written checkpoint question — at
+    which point the lesson pauses and waits for the real student again.
+
+    The frontend calls this in a loop (with a short delay between calls, for
+    pacing) while the previous call's "done" event says continue=true.
+    """
+    try:
+        if not session.plan:
+            yield {"type": "done", "continue": False, "awaiting_user": True}
+            return
+
+        activities = session.plan.get("activities", [])
+        if session.activity_index >= len(activities):
+            session.awaiting_user = True
+            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
+            yield {"type": "done", "continue": False, "awaiting_user": True}
+            return
+
+        activity = activities[session.activity_index]
+        budget = activity.get("autonomous_exchanges", DEFAULT_AUTONOMOUS_EXCHANGES)
+
+        if session.autonomous_turns_used < budget:
+            # The classroom talks amongst itself: the pool agent whose turn
+            # it is reacts to the activity and what's been said so far.
+            pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
+            session.pool_turn_index += 1
+            transcript = session.transcript_text() + f"\n\n[פעילות נוכחית במערך השיעור: {activity['title']} — {activity.get('summary', '')}]"
+            yield {"type": "start", "key": pool_agent.key, "name": pool_agent.display_name, "color": pool_agent.color}
+            parts = []
+            for chunk in _call_agent_stream(pool_agent, transcript, api_key=api_key):
+                parts.append(chunk)
+                yield {"type": "token", "text": chunk}
+            text = "".join(parts).strip() or "..."
+            yield {"type": "end"}
+            _remember(session, ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, text))
+
+            session.autonomous_turns_used += 1
+            still_more_in_activity = session.autonomous_turns_used < budget
+            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, False)
+            yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}
+        else:
+            # Budget spent — the teacher asks the activity's pre-written
+            # checkpoint question (no extra model call needed for this one;
+            # it was already written when the plan was generated) and the
+            # lesson pauses for the real student.
+            question = activity["checkpoint_question"]
+            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
+            for chunk in _word_chunks(question):
+                yield {"type": "token", "text": chunk}
+                time.sleep(TEACHER_REPLAY_DELAY)
+            yield {"type": "end"}
+            _remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, question))
+
+            session.awaiting_user = True
+            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
+            yield {"type": "done", "continue": False, "awaiting_user": True, "activity_index": session.activity_index}
+
+    except MissingApiKeyError:
+        yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
+    except anthropic.AuthenticationError:
+        yield {"type": "error", "detail": "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."}
+    except Exception as e:
+        print(f"[advance_lesson_stream] unexpected error: {e!r}")
+        yield {"type": "error", "detail": "משהו השתבש בצד השרת. נסה שוב."}
