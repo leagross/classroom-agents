@@ -29,11 +29,15 @@ def verify_teacher_answer(topic: str, answer: str, api_key: str | None = None) -
     return False, verdict
 
 
-def get_validated_teacher_reply(session: Session, api_key: str | None = None, image: dict | None = None) -> str:
-    transcript = session.transcript_text()
+def _verified_answer(
+    topic: str, transcript: str, api_key: str | None = None, image: dict | None = None
+) -> str:
+    """Shared retry loop behind both get_validated_teacher_reply (responding
+    to the student) and get_validated_teacher_explanation (proactively
+    teaching an activity's material) — same guarantee, different transcript."""
     answer = call_agent(TEACHER, transcript, api_key=api_key, image=image)
     for _ in range(MAX_VERIFY_RETRIES):
-        ok, reason = verify_teacher_answer(session.topic, answer, api_key=api_key)
+        ok, reason = verify_teacher_answer(topic, answer, api_key=api_key)
         if ok:
             return answer
         answer = call_agent(
@@ -47,3 +51,21 @@ def get_validated_teacher_reply(session: Session, api_key: str | None = None, im
             image=image,
         )
     return answer
+
+
+def get_validated_teacher_reply(session: Session, api_key: str | None = None, image: dict | None = None) -> str:
+    return _verified_answer(session.topic, session.transcript_text(), api_key=api_key, image=image)
+
+
+def get_validated_teacher_explanation(session: Session, activity: dict, api_key: str | None = None) -> str:
+    """The teacher proactively teaching an activity's material — not
+    responding to something the student just said. This always runs first
+    in a plan-driven activity (see lesson_plan.advance_lesson_stream): the
+    classroom never jumps straight to student chatter or a checkpoint
+    question before the teacher has actually explained the content."""
+    transcript = session.transcript_text() + (
+        f"\n\n[השלב הנוכחי במערך השיעור: {activity['title']} — {activity.get('summary', '')}. "
+        "זה הרגע שבו המורה צריך להסביר בפועל את החומר של השלב הזה לתלמיד, "
+        "בבירור ובפירוט מספק — לא לשאול שאלה ולא לדלג היישר להמשך.]"
+    )
+    return _verified_answer(session.topic, transcript, api_key=api_key)

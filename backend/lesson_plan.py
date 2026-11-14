@@ -25,6 +25,7 @@ from agent_calls import (
 from agents import LESSON_PLAN_SYSTEM_PROMPT, TEACHER
 from json_utils import extract_json
 from session_state import ChatMessage, Session, remember
+from teacher import get_validated_teacher_explanation
 
 LESSON_PLAN_MODEL = os.environ.get("CLASSROOM_LESSON_PLAN_MODEL", MODEL)
 # Hebrew text tokenizes far less efficiently than English, and a 3-5 activity
@@ -92,11 +93,12 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
 def advance_lesson_stream(session: Session, api_key: str | None = None):
     """Generator (same SSE event shape as orchestrator.handle_user_message_stream)
     that produces exactly ONE autonomous 'beat' of a plan-driven lesson,
-    without any new user message: either a pool-agent reaction (the
-    classroom talking amongst itself) or, once the current activity's
-    autonomous budget is spent, the teacher's pre-written checkpoint
-    question — at which point the lesson pauses and waits for the real
-    student again.
+    without any new user message: the teacher explaining the activity's
+    material (always first — never skipped), a pool-agent reaction (the
+    classroom talking amongst itself, only once the teacher has actually
+    taught this activity), or, once the autonomous budget is spent, the
+    teacher's pre-written checkpoint question — at which point the lesson
+    pauses and waits for the real student again.
 
     The frontend calls this in a loop (with a short delay between calls, for
     pacing) while the previous call's "done" event says continue=true.
@@ -114,6 +116,22 @@ def advance_lesson_stream(session: Session, api_key: str | None = None):
             return
 
         activity = activities[session.activity_index]
+
+        if not session.activity_teacher_explained:
+            # The teacher always teaches the material first — no jumping
+            # straight to student chatter or a checkpoint question.
+            explanation = get_validated_teacher_explanation(session, activity, api_key=api_key)
+            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
+            for chunk in word_chunks(explanation):
+                yield {"type": "token", "text": chunk}
+                time.sleep(TEACHER_REPLAY_DELAY)
+            yield {"type": "end"}
+            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, explanation))
+
+            session.activity_teacher_explained = True
+            yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}
+            return
+
         budget = activity.get("autonomous_exchanges", DEFAULT_AUTONOMOUS_EXCHANGES)
 
         if session.autonomous_turns_used < budget:
@@ -178,6 +196,7 @@ def advance_after_checkpoint(session: Session) -> dict:
     activities = session.plan.get("activities", [])
     session.activity_index += 1
     session.autonomous_turns_used = 0
+    session.activity_teacher_explained = False
     more_activities_left = session.activity_index < len(activities)
     session.awaiting_user = not more_activities_left
     db.update_lesson_plan_state(

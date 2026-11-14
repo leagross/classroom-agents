@@ -48,6 +48,12 @@ class Session:
     # checkpoint and the student's answer is somehow replayed — an edge
     # case not worth a DB column for.
     homework_delivered: bool = False
+    # Also in-memory only: whether the teacher has already explained the
+    # CURRENT activity's material. Reset to False every time activity_index
+    # advances (see lesson_plan.advance_after_checkpoint) — a plan-driven
+    # activity always leads with the teacher actually teaching, never with
+    # student chatter or a checkpoint question jumped straight to.
+    activity_teacher_explained: bool = False
 
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]
