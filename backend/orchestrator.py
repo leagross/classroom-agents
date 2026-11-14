@@ -83,10 +83,17 @@ def handle_user_message_stream(
         session.round_count += 1
 
         # If this message answers the current activity's checkpoint question
-        # (plan-driven lesson, was actually waiting on the student), the
+        # (plan-driven lesson, was actually waiting on the student, AND
+        # there's still an activity at activity_index — once the plan is
+        # exhausted, activity_index points past the end of the list, but
+        # awaiting_user stays true forever after homework is delivered), the
         # teacher's reply is a comprehension check, not a generic answer —
         # and its verdict decides whether the lesson is allowed to move on.
-        answering_checkpoint = bool(session.plan) and session.awaiting_user
+        answering_checkpoint = (
+            bool(session.plan)
+            and session.awaiting_user
+            and session.activity_index < len(session.plan.get("activities", []))
+        )
         understood = True
 
         # --- Teacher: verify silently, then replay the validated text ---
