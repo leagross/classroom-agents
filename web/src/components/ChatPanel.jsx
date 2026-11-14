@@ -6,7 +6,9 @@ import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
 import BoardPaginator from "../lib/board/BoardPaginator";
+import { downloadLessonSummary } from "../lib/lessonSummary";
 import LessonBoard from "./LessonBoard";
+import QuizModal from "./QuizModal";
 import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -27,7 +29,7 @@ function Avatar({ name, color, small }) {
 export default function ChatPanel({
   sessionId, topic, poolNames, initialHistory,
   plan, initialActivityIndex, initialAwaitingUser,
-  onHome, onOpenQuiz, onApiKeyError,
+  onHome, onApiKeyError,
 }) {
   const [messages, setMessages] = useState(initialHistory || []);
   const [input, setInput] = useState("");
@@ -36,6 +38,8 @@ export default function ChatPanel({
   const [waiting, setWaiting] = useState(false);
   const [boardPages, setBoardPages] = useState([""]);
   const [boardPageIndex, setBoardPageIndex] = useState(0);
+  const [quizOpen, setQuizOpen] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState(null);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
@@ -51,6 +55,7 @@ export default function ChatPanel({
     setMessages(initialHistory || []);
     setBoardPages(boardRef.current.reset());
     setBoardPageIndex(0);
+    setQuizQuestions(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -154,6 +159,10 @@ export default function ChatPanel({
 
   const currentActivity = plan?.activities?.[activityIndex];
 
+  function handleExportSummary() {
+    downloadLessonSummary({ topic, poolNames, plan, boardPages, quizQuestions });
+  }
+
   return (
     <div className="chat-panel">
       <div className="topic-bar">
@@ -162,7 +171,8 @@ export default function ChatPanel({
           נושא: {topic} · הרכב הכיתה: המורה, {(poolNames || []).join(", ")}
           {plan && currentActivity && ` · שלב ${Math.min(activityIndex + 1, plan.activities.length)}/${plan.activities.length} (${stageLabel(currentActivity.stage)}): ${currentActivity.title}`}
         </span>
-        <button className="quiz-btn" onClick={onOpenQuiz}>📝 בוחן על השיעור</button>
+        <button className="export-btn" onClick={handleExportSummary} title="ייצוא סיכום שיעור">📄 ייצוא סיכום</button>
+        <button className="quiz-btn" onClick={() => setQuizOpen(true)}>📝 בוחן על השיעור</button>
       </div>
 
       {plan && (
@@ -238,6 +248,13 @@ export default function ChatPanel({
           onClick={tts.toggle}
         >{tts.enabled ? "🔊" : "🔇"}</button>
       </div>
+
+      <QuizModal
+        open={quizOpen}
+        sessionId={sessionId}
+        onClose={() => setQuizOpen(false)}
+        onQuestionsLoaded={setQuizQuestions}
+      />
     </div>
   );
 }

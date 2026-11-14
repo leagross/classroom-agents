@@ -3,7 +3,7 @@ import { fetchQuiz } from "../lib/api/chat";
 import renderMath from "../hooks/useMathRender";
 import "./QuizModal.css";
 
-export default function QuizModal({ open, sessionId, onClose }) {
+export default function QuizModal({ open, sessionId, onClose, onQuestionsLoaded }) {
   const [questions, setQuestions] = useState(null);
   const [answers, setAnswers] = useState({});
   const [graded, setGraded] = useState(false);
@@ -17,7 +17,10 @@ export default function QuizModal({ open, sessionId, onClose }) {
     setGraded(false);
     setError("");
     fetchQuiz(sessionId)
-      .then(setQuestions)
+      .then((qs) => {
+        setQuestions(qs);
+        onQuestionsLoaded?.(qs);
+      })
       .catch((e) => setError(e.message));
   }, [open, sessionId]);
 

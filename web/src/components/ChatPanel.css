@@ -24,6 +24,12 @@
   font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;
   box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
 }
+.export-btn {
+  border: 1.5px solid var(--border); background: var(--surface-2); color: var(--muted);
+  padding: 7px 14px; border-radius: 16px; font-size: 12px;
+  font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.export-btn:hover { border-color: rgba(79,70,229,.4); color: var(--p1); }
 
 .chat-messages {
   flex: 1;

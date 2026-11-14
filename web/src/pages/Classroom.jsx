@@ -5,7 +5,6 @@ import SyllabusBuilder from "../components/SyllabusBuilder";
 import SyllabusView from "../components/SyllabusView";
 import ChatPanel from "../components/ChatPanel";
 import SettingsModal from "../components/SettingsModal";
-import QuizModal from "../components/QuizModal";
 import AuthArea from "../components/AuthArea";
 import { createSession, getSession } from "../lib/api/session";
 import { getSyllabus } from "../lib/api/syllabus";
@@ -29,7 +28,6 @@ export default function Classroom() {
   const [syllabus, setSyllabus] = useState(null); // { id, topic, lessons } — the outline list view
   const [entryMode, setEntryMode] = useState("single"); // "single" | "syllabus" — only matters with no session/syllabus
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [quizOpen, setQuizOpen] = useState(false);
   const [hasKey, setHasKey] = useState(!!getStoredApiKey());
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
 
@@ -117,7 +115,6 @@ export default function Classroom() {
               initialActivityIndex={session.activityIndex}
               initialAwaitingUser={session.awaitingUser}
               onHome={handleHome}
-              onOpenQuiz={() => setQuizOpen(true)}
               onApiKeyError={handleApiKeyError}
             />
           ) : syllabus ? (
@@ -157,7 +154,6 @@ export default function Classroom() {
         onClose={() => setSettingsOpen(false)}
         onKeyChange={() => setHasKey(!!getStoredApiKey())}
       />
-      {session && <QuizModal open={quizOpen} sessionId={session.id} onClose={() => setQuizOpen(false)} />}
     </div>
   );
 }
