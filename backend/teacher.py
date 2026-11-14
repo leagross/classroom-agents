@@ -95,3 +95,43 @@ def get_validated_teacher_explanation(
     )
     answer = _verified_answer(session.topic, transcript, api_key=api_key)
     return split_board_notes(answer)
+
+
+#: Marks whether the student's checkpoint answer showed real understanding —
+#: same "marker, not JSON" spirit as BOARD_NOTES_MARKER: a model that forgets
+#: it just defaults to UNDERSTOOD (move on) rather than getting the lesson
+#: stuck in a loop over a formatting slip.
+UNDERSTOOD_MARKER = "===UNDERSTOOD==="
+RETEACH_MARKER = "===RETEACH==="
+
+
+def split_checkpoint_verdict(answer: str) -> tuple[str, bool]:
+    for marker, understood in ((UNDERSTOOD_MARKER, True), (RETEACH_MARKER, False)):
+        if marker in answer:
+            feedback, _, _ = answer.partition(marker)
+            return feedback.strip(), understood
+    return answer.strip(), True
+
+
+def get_validated_checkpoint_feedback(
+    session: Session, activity: dict, api_key: str | None = None
+) -> tuple[str, bool]:
+    """The teacher reacting to the student's answer to THIS activity's
+    checkpoint_question specifically — not a generic reply. Decides whether
+    the classroom is allowed to move on to the next activity.
+
+    Returns (feedback, understood): feedback is the chat message shown to
+    the student (praise, a gentle correction, or another example); understood
+    says whether lesson_plan.py should advance to the next activity or stay
+    on this one and have the teacher re-teach it."""
+    transcript = session.transcript_text() + (
+        f"\n\n[התלמיד הרגע ענה על שאלת הבדיקה של הפעילות הנוכחית במערך השיעור "
+        f"({activity['title']}): \"{activity['checkpoint_question']}\". "
+        "תן משוב קצר וממוקד על התשובה שלו: אם היא מראה הבנה אמיתית של החומר — חיזוק קצר "
+        "וממוקד, לא גנרי. אם היא מראה שהוא עדיין לא הבין — תקן בעדינות, והבא דוגמה נוספת "
+        "שונה מזו שכבר השתמשת בה, כדי להבהיר מזווית אחרת.\n"
+        f"בסיום המשוב שלך, בשורה נפרדת משלה, כתוב בדיוק אחת מהשתיים: אם התשובה מראה הבנה "
+        f"מספקת כדי להמשיך לפעילות הבאה, כתוב {UNDERSTOOD_MARKER}. אם לא, כתוב {RETEACH_MARKER}.]"
+    )
+    answer = _verified_answer(session.topic, transcript, api_key=api_key)
+    return split_checkpoint_verdict(answer)

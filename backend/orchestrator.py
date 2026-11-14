@@ -15,9 +15,9 @@ import anthropic
 
 from agent_calls import MissingApiKeyError, TEACHER_REPLAY_DELAY, call_agent, call_agent_stream, word_chunks
 from agents import JESTER, TEACHER
-from lesson_plan import advance_after_checkpoint
+from lesson_plan import advance_after_checkpoint, retry_after_misunderstanding
 from session_state import ChatMessage, JESTER_EVERY_MAX, JESTER_EVERY_MIN, Session, remember
-from teacher import get_validated_teacher_reply
+from teacher import get_validated_checkpoint_feedback, get_validated_teacher_reply
 
 import db
 
@@ -82,8 +82,19 @@ def handle_user_message_stream(
         remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
         session.round_count += 1
 
+        # If this message answers the current activity's checkpoint question
+        # (plan-driven lesson, was actually waiting on the student), the
+        # teacher's reply is a comprehension check, not a generic answer —
+        # and its verdict decides whether the lesson is allowed to move on.
+        answering_checkpoint = bool(session.plan) and session.awaiting_user
+        understood = True
+
         # --- Teacher: verify silently, then replay the validated text ---
-        teacher_text = get_validated_teacher_reply(session, api_key=api_key, image=image)
+        if answering_checkpoint:
+            activity = session.plan["activities"][session.activity_index]
+            teacher_text, understood = get_validated_checkpoint_feedback(session, activity, api_key=api_key)
+        else:
+            teacher_text = get_validated_teacher_reply(session, api_key=api_key, image=image)
         yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
         for chunk in word_chunks(teacher_text):
             yield {"type": "token", "text": chunk}
@@ -91,6 +102,13 @@ def handle_user_message_stream(
         yield {"type": "end"}
         teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
         remember(session, teacher_msg)
+
+        if answering_checkpoint and not understood:
+            # Stay on this activity — skip the pool agent/jester this turn
+            # and let the autonomous loop re-teach it instead of moving on.
+            db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
+            yield {"type": "done", **retry_after_misunderstanding(session)}
+            return
 
         # --- Pool agent: live model stream ---
         pool_agent = session.pool[session.pool_turn_index % len(session.pool)]

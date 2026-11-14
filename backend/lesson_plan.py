@@ -220,3 +220,17 @@ def advance_after_checkpoint(session: Session) -> dict:
     if not more_activities_left and session.syllabus_id is not None:
         syllabus.mark_lesson_completed(session.syllabus_id, session.syllabus_lesson_index)
     return extra
+
+
+def retry_after_misunderstanding(session: Session) -> dict:
+    """Called instead of advance_after_checkpoint when the student's answer
+    to the checkpoint question showed they haven't understood the activity's
+    material yet. Stays on the SAME activity (activity_index unchanged) but
+    resets activity_teacher_explained, so the next autonomous beat re-teaches
+    it — ideally with a different example — before the checkpoint is asked
+    again, instead of plowing ahead to the next activity regardless."""
+    session.activity_teacher_explained = False
+    session.autonomous_turns_used = 0
+    session.awaiting_user = False
+    db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, False)
+    return {"continue": True, "awaiting_user": False, "activity_index": session.activity_index}
