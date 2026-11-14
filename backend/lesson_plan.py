@@ -120,14 +120,19 @@ def advance_lesson_stream(session: Session, api_key: str | None = None):
 
         if not session.activity_teacher_explained:
             # The teacher always teaches the material first — no jumping
-            # straight to student chatter or a checkpoint question.
-            explanation = get_validated_teacher_explanation(session, activity, api_key=api_key)
+            # straight to student chatter or a checkpoint question. What the
+            # teacher SAYS (speech) and what they WRITE on the board
+            # (board_notes — short key points, never the whole explanation)
+            # are two different things; only the latter goes to the board.
+            speech, board_notes = get_validated_teacher_explanation(session, activity, api_key=api_key)
             yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
-            for chunk in word_chunks(explanation):
+            for chunk in word_chunks(speech):
                 yield {"type": "token", "text": chunk}
                 time.sleep(TEACHER_REPLAY_DELAY)
             yield {"type": "end"}
-            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, explanation))
+            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, speech))
+            if board_notes:
+                yield {"type": "board", "text": board_notes}
 
             session.activity_teacher_explained = True
             yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}

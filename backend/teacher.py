@@ -57,15 +57,41 @@ def get_validated_teacher_reply(session: Session, api_key: str | None = None, im
     return _verified_answer(session.topic, session.transcript_text(), api_key=api_key, image=image)
 
 
-def get_validated_teacher_explanation(session: Session, activity: dict, api_key: str | None = None) -> str:
+#: Separates what the teacher actually says (shown in chat) from the short
+#: notes they write on the lesson board (see split_board_notes) — a marker
+#: rather than JSON so a model that forgets it just degrades gracefully to
+#: "no board notes" instead of a parse failure needing its own retry loop.
+BOARD_NOTES_MARKER = "---BOARD---"
+
+
+def split_board_notes(answer: str) -> tuple[str, str]:
+    if BOARD_NOTES_MARKER in answer:
+        speech, _, notes = answer.partition(BOARD_NOTES_MARKER)
+        return speech.strip(), notes.strip()
+    return answer.strip(), ""
+
+
+def get_validated_teacher_explanation(
+    session: Session, activity: dict, api_key: str | None = None
+) -> tuple[str, str]:
     """The teacher proactively teaching an activity's material — not
     responding to something the student just said. This always runs first
     in a plan-driven activity (see lesson_plan.advance_lesson_stream): the
     classroom never jumps straight to student chatter or a checkpoint
-    question before the teacher has actually explained the content."""
+    question before the teacher has actually explained the content.
+
+    Returns (speech, board_notes): speech is the full explanation as shown
+    in chat; board_notes is a short, separate set of key points/formulas for
+    the lesson board — never the whole explanation dumped onto it."""
     transcript = session.transcript_text() + (
         f"\n\n[השלב הנוכחי במערך השיעור: {activity['title']} — {activity.get('summary', '')}. "
-        "זה הרגע שבו המורה צריך להסביר בפועל את החומר של השלב הזה לתלמיד, "
-        "בבירור ובפירוט מספק — לא לשאול שאלה ולא לדלג היישר להמשך.]"
+        "זה הרגע שבו המורה צריך ללמד בפועל את החומר של השלב הזה לתלמיד שעדיין לא מכיר אותו. "
+        "אל תזרוק את כל החומר במשפט אחד ואל תניח שהתלמיד כבר מכיר את הרקע: תתחיל בהסבר "
+        "הדרגתי ופשוט, ותביא לפחות דוגמה קונקרטית אחת לפני שאתה ממשיך הלאה.\n"
+        f"בסיום דבריך, בשורה נפרדת משלה בדיוק כך: {BOARD_NOTES_MARKER}\n"
+        "ואחריה כתוב 2-4 שורות קצרות בלבד — בדיוק מה שבאמת היית כותב ביד על לוח פיזי: "
+        "מושג, נוסחה, או משפט-מפתח אחד לכל שורה. לא משפטים מלאים ולא את מה שאמרת בעל פה, "
+        "רק הכותרות שתלמיד ירשום לעצמו.]"
     )
-    return _verified_answer(session.topic, transcript, api_key=api_key)
+    answer = _verified_answer(session.topic, transcript, api_key=api_key)
+    return split_board_notes(answer)

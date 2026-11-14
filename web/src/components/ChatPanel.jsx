@@ -5,7 +5,7 @@ import useTextToSpeech from "../hooks/useTextToSpeech";
 import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
-import { TEACHER_KEY } from "../lib/agentKeys";
+import BoardPaginator from "../lib/board/BoardPaginator";
 import LessonBoard from "./LessonBoard";
 import "./ChatPanel.css";
 
@@ -34,10 +34,13 @@ export default function ChatPanel({
   const [pendingImage, setPendingImage] = useState(null);
   const [streaming, setStreaming] = useState(null); // {name, color, text}
   const [waiting, setWaiting] = useState(false);
-  const [board, setBoard] = useState(null); // {text, isLive} — plan-driven lessons only, teacher beats only
+  const [boardPages, setBoardPages] = useState([""]);
+  const [boardPageIndex, setBoardPageIndex] = useState(0);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
+  const boardRef = useRef(null);
+  if (!boardRef.current) boardRef.current = new BoardPaginator();
   const tts = useTextToSpeech();
 
   const { activityIndex, preempt, handleDone } = useLessonAutoplay({
@@ -46,7 +49,8 @@ export default function ChatPanel({
 
   useEffect(() => {
     setMessages(initialHistory || []);
-    setBoard(null);
+    setBoardPages(boardRef.current.reset());
+    setBoardPageIndex(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -66,24 +70,27 @@ export default function ChatPanel({
   /** Wires a streaming call's events to the chat UI, returns the final "done" event. */
   async function runStream(callStreamFn) {
     let accumulated = "";
-    let current = { name: "", color: "", key: "" };
+    let current = { name: "", color: "" };
     let doneEvent = null;
     await callStreamFn((evt) => {
       setWaiting(false);
       if (evt.type === "start") {
         accumulated = "";
-        current = { name: evt.name, color: evt.color, key: evt.key };
+        current = { name: evt.name, color: evt.color };
         setStreaming({ name: evt.name, color: evt.color, text: "" });
-        if (plan && evt.key === TEACHER_KEY) setBoard({ text: "", isLive: true });
       } else if (evt.type === "token") {
         accumulated += evt.text;
         setStreaming((prev) => (prev ? { ...prev, text: accumulated } : prev));
-        if (plan && current.key === TEACHER_KEY) setBoard({ text: accumulated, isLive: true });
       } else if (evt.type === "end") {
         setMessages((prev) => [...prev, { agent: current.name, key: "assistant", color: current.color, text: accumulated, isUser: false }]);
         setStreaming(null);
         tts.speak(accumulated);
-        if (plan && current.key === TEACHER_KEY) setBoard({ text: accumulated, isLive: false });
+      } else if (evt.type === "board") {
+        // Short key-point notes the teacher explicitly wrote — never the
+        // full explanation text above. See backend teacher.split_board_notes.
+        const pages = boardRef.current.append(evt.text);
+        setBoardPages(pages);
+        setBoardPageIndex(pages.length - 1);
       } else if (evt.type === "done") {
         doneEvent = evt;
       } else if (evt.type === "error") {
@@ -158,7 +165,14 @@ export default function ChatPanel({
         <button className="quiz-btn" onClick={onOpenQuiz}>📝 בוחן על השיעור</button>
       </div>
 
-      {plan && <LessonBoard text={board?.text} isLive={board?.isLive} />}
+      {plan && (
+        <LessonBoard
+          pages={boardPages}
+          pageIndex={boardPageIndex}
+          onPrev={() => setBoardPageIndex((i) => Math.max(0, i - 1))}
+          onNext={() => setBoardPageIndex((i) => Math.min(boardPages.length - 1, i + 1))}
+        />
+      )}
 
       <div className="chat-messages" ref={chatRef}>
         {messages.map((m, i) => (
