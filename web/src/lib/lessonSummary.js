@@ -4,7 +4,7 @@
  * one was generated this session. Pure client-side (Blob download), same
  * spirit as LessonPlanPreview's Markdown export — no server round-trip.
  */
-export function buildLessonSummaryMarkdown({ topic, poolNames, plan, boardPages, quizQuestions }) {
+export function buildLessonSummaryMarkdown({ topic, poolNames, plan, boardPages, quizQuestions, flashcards }) {
   const lines = [`# סיכום שיעור: ${topic}`, ""];
 
   if (poolNames?.length) {
@@ -40,6 +40,12 @@ export function buildLessonSummaryMarkdown({ topic, poolNames, plan, boardPages,
       if (q.explanation) lines.push(`   (${q.explanation})`);
       lines.push("");
     });
+  }
+
+  if (flashcards?.length) {
+    lines.push("## כרטיסיות לחזרה");
+    flashcards.forEach((c, i) => lines.push(`${i + 1}. **${c.front}** — ${c.back}`));
+    lines.push("");
   }
 
   return lines.join("\n");

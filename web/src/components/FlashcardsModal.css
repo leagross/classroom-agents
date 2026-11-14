@@ -1,0 +1,28 @@
+.flashcards-modal { max-width: 420px; text-align: center; }
+
+.flashcard {
+  margin-top: 16px;
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--p1), var(--p2));
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.flashcard-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+.flashcard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+.flashcard-count { font-size: 13px; color: var(--muted); }

@@ -9,6 +9,7 @@ import BoardPaginator from "../lib/board/BoardPaginator";
 import { downloadLessonSummary } from "../lib/lessonSummary";
 import LessonBoard from "./LessonBoard";
 import QuizModal from "./QuizModal";
+import FlashcardsModal from "./FlashcardsModal";
 import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -40,6 +41,8 @@ export default function ChatPanel({
   const [boardPageIndex, setBoardPageIndex] = useState(0);
   const [quizOpen, setQuizOpen] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState(null);
+  const [flashcardsOpen, setFlashcardsOpen] = useState(false);
+  const [flashcards, setFlashcards] = useState(null);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
@@ -56,6 +59,7 @@ export default function ChatPanel({
     setBoardPages(boardRef.current.reset());
     setBoardPageIndex(0);
     setQuizQuestions(null);
+    setFlashcards(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -160,7 +164,7 @@ export default function ChatPanel({
   const currentActivity = plan?.activities?.[activityIndex];
 
   function handleExportSummary() {
-    downloadLessonSummary({ topic, poolNames, plan, boardPages, quizQuestions });
+    downloadLessonSummary({ topic, poolNames, plan, boardPages, quizQuestions, flashcards });
   }
 
   return (
@@ -172,6 +176,7 @@ export default function ChatPanel({
           {plan && currentActivity && ` · שלב ${Math.min(activityIndex + 1, plan.activities.length)}/${plan.activities.length} (${stageLabel(currentActivity.stage)}): ${currentActivity.title}`}
         </span>
         <button className="export-btn" onClick={handleExportSummary} title="ייצוא סיכום שיעור">📄 ייצוא סיכום</button>
+        <button className="export-btn" onClick={() => setFlashcardsOpen(true)}>🗂️ כרטיסיות</button>
         <button className="quiz-btn" onClick={() => setQuizOpen(true)}>📝 בוחן על השיעור</button>
       </div>
 
@@ -254,6 +259,12 @@ export default function ChatPanel({
         sessionId={sessionId}
         onClose={() => setQuizOpen(false)}
         onQuestionsLoaded={setQuizQuestions}
+      />
+      <FlashcardsModal
+        open={flashcardsOpen}
+        sessionId={sessionId}
+        onClose={() => setFlashcardsOpen(false)}
+        onCardsLoaded={setFlashcards}
       />
     </div>
   );

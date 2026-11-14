@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import auth
 import billing
 import db
+import flashcards
 import lesson_plan
 import orchestrator
 import quiz
@@ -439,6 +440,33 @@ def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=No
     except quiz.QuizGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"questions": questions}
+
+
+@app.post("/api/session/{session_id}/flashcards")
+def create_flashcards(session_id: str, x_anthropic_key: str | None = Header(default=None)):
+    try:
+        session = session_state.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    if session.round_count < 1:
+        raise HTTPException(status_code=400, detail="אין עדיין מספיק שיחה בשיעור כדי לבנות כרטיסיות.")
+
+    try:
+        cards = flashcards.generate_flashcards(session, api_key=x_anthropic_key)
+    except MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
+    except flashcards.FlashcardsGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"cards": cards}
 
 
 app.include_router(slack_bot.router)

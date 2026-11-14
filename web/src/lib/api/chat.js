@@ -19,3 +19,13 @@ export async function fetchQuiz(sessionId) {
   if (!res.ok) throw new Error(data.detail || "quiz generation failed");
   return data.questions;
 }
+
+export async function fetchFlashcards(sessionId) {
+  const res = await fetch(API_BASE + "/api/session/" + sessionId + "/flashcards", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "flashcards generation failed");
+  return data.cards;
+}
