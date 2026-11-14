@@ -5,6 +5,8 @@ import useTextToSpeech from "../hooks/useTextToSpeech";
 import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
+import { TEACHER_KEY } from "../lib/agentKeys";
+import LessonBoard from "./LessonBoard";
 import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -32,6 +34,7 @@ export default function ChatPanel({
   const [pendingImage, setPendingImage] = useState(null);
   const [streaming, setStreaming] = useState(null); // {name, color, text}
   const [waiting, setWaiting] = useState(false);
+  const [board, setBoard] = useState(null); // {text, isLive} — plan-driven lessons only, teacher beats only
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
@@ -43,6 +46,7 @@ export default function ChatPanel({
 
   useEffect(() => {
     setMessages(initialHistory || []);
+    setBoard(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -62,21 +66,24 @@ export default function ChatPanel({
   /** Wires a streaming call's events to the chat UI, returns the final "done" event. */
   async function runStream(callStreamFn) {
     let accumulated = "";
-    let current = { name: "", color: "" };
+    let current = { name: "", color: "", key: "" };
     let doneEvent = null;
     await callStreamFn((evt) => {
       setWaiting(false);
       if (evt.type === "start") {
         accumulated = "";
-        current = { name: evt.name, color: evt.color };
+        current = { name: evt.name, color: evt.color, key: evt.key };
         setStreaming({ name: evt.name, color: evt.color, text: "" });
+        if (plan && evt.key === TEACHER_KEY) setBoard({ text: "", isLive: true });
       } else if (evt.type === "token") {
         accumulated += evt.text;
         setStreaming((prev) => (prev ? { ...prev, text: accumulated } : prev));
+        if (plan && current.key === TEACHER_KEY) setBoard({ text: accumulated, isLive: true });
       } else if (evt.type === "end") {
         setMessages((prev) => [...prev, { agent: current.name, key: "assistant", color: current.color, text: accumulated, isUser: false }]);
         setStreaming(null);
         tts.speak(accumulated);
+        if (plan && current.key === TEACHER_KEY) setBoard({ text: accumulated, isLive: false });
       } else if (evt.type === "done") {
         doneEvent = evt;
       } else if (evt.type === "error") {
@@ -150,6 +157,8 @@ export default function ChatPanel({
         </span>
         <button className="quiz-btn" onClick={onOpenQuiz}>📝 בוחן על השיעור</button>
       </div>
+
+      {plan && <LessonBoard text={board?.text} isLive={board?.isLive} />}
 
       <div className="chat-messages" ref={chatRef}>
         {messages.map((m, i) => (
