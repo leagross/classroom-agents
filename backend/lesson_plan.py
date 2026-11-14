@@ -27,7 +27,12 @@ from json_utils import extract_json
 from session_state import ChatMessage, Session, remember
 
 LESSON_PLAN_MODEL = os.environ.get("CLASSROOM_LESSON_PLAN_MODEL", MODEL)
-LESSON_PLAN_MAX_TOKENS = 1500
+# Hebrew text tokenizes far less efficiently than English, and a 3-5 activity
+# plan (title + summary + checkpoint_question each, plus JSON overhead) can
+# run well past 1500 tokens — too low a budget here doesn't fail cleanly, it
+# truncates mid-string and surfaces as a confusing "Unterminated string" JSON
+# parse error instead of a clear "response was cut off".
+LESSON_PLAN_MAX_TOKENS = 3000
 LESSON_PLAN_MAX_RETRIES = 2
 DEFAULT_AUTONOMOUS_EXCHANGES = 1
 
@@ -52,6 +57,8 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
             messages=[{"role": "user", "content": user_content}],
         )
         raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        if response.stop_reason == "max_tokens":
+            print(f"[generate_lesson_plan] response truncated at max_tokens={LESSON_PLAN_MAX_TOKENS}; raw_len={len(raw)}")
         try:
             plan = extract_json(raw)
             if not isinstance(plan, dict):
