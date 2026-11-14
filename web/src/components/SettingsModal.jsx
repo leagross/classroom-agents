@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getStoredApiKey, setStoredApiKey, clearStoredApiKey } from "../lib/api";
+import { getStoredApiKey, setStoredApiKey, clearStoredApiKey } from "../lib/api/apiKey";
 
 export default function SettingsModal({ open, onClose, onKeyChange }) {
   const [input, setInput] = useState(getStoredApiKey());

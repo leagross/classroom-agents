@@ -1,333 +1,57 @@
-"""Session state and turn orchestration for the virtual classroom."""
+"""Turn orchestration for a single user message: the teacher's verified
+reply, the pool agent's reaction, and a rare jester cameo.
 
-import json
-import os
+This is the "review" lesson's entire behavior, unchanged since before the
+lesson-plan feature existed. For a plan-driven lesson, the only extra thing
+that happens here is handing off to lesson_plan.advance_after_checkpoint at
+the very end, so the frontend knows whether to resume the autonomous loop —
+everything about *what* that means lives in lesson_plan.py, not here.
+"""
+
 import random
 import time
-import uuid
-from dataclasses import dataclass, field
 
 import anthropic
 
+from agent_calls import MissingApiKeyError, TEACHER_REPLAY_DELAY, call_agent, call_agent_stream, word_chunks
+from agents import JESTER, TEACHER
+from lesson_plan import advance_after_checkpoint
+from session_state import ChatMessage, JESTER_EVERY_MAX, JESTER_EVERY_MIN, Session, remember
+from teacher import get_validated_teacher_reply
+
 import db
-from agents import (
-    AGENTS_BY_KEY,
-    CONNECTOR,
-    DEEP_DIVER,
-    JESTER,
-    LESSON_PLAN_SYSTEM_PROMPT,
-    POOL,
-    QUIZ_SYSTEM_PROMPT,
-    SIMPLIFIER,
-    STUDENT_DANI,
-    TEACHER,
-    VERIFIER_SYSTEM_PROMPT,
-)
-
-MODEL = os.environ.get("CLASSROOM_MODEL", "claude-sonnet-5-5")
-VERIFIER_MODEL = os.environ.get("CLASSROOM_VERIFIER_MODEL", "claude-haiku-5-5")
-MAX_VERIFY_RETRIES = 2
-JESTER_EVERY_MIN = 3
-JESTER_EVERY_MAX = 4
-HISTORY_WINDOW = 20
-
-db.init_db()
-
-
-def _get_client(api_key: str | None) -> anthropic.Anthropic:
-    """Every caller must bring its own Anthropic API key — there is no shared
-    server-side key for the web chat. (The Slack integration is the one
-    exception: it has no browser to hold a per-user key, so it supplies its
-    own dedicated SLACK_ANTHROPIC_API_KEY explicitly — see slack_bot.py.)
-    The key is used to build a one-off client for this call only; it is never
-    logged, cached, or persisted to the DB."""
-    if not api_key:
-        raise MissingApiKeyError("No Anthropic API key was provided for this request.")
-    return anthropic.Anthropic(api_key=api_key)
-
-
-class MissingApiKeyError(Exception):
-    pass
-
-
-@dataclass
-class ChatMessage:
-    agent_key: str
-    display_name: str
-    color: str
-    content: str
-
-
-@dataclass
-class Session:
-    id: str
-    topic: str
-    pool: list
-    history: list = field(default_factory=list)  # list[ChatMessage]
-    round_count: int = 0
-    next_jester_round: int = field(default_factory=lambda: random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX))
-    pool_turn_index: int = 0
-    # Lesson plan (optional — only set for a "new lesson", never for "review"
-    # sessions, which behave exactly as before this feature existed).
-    plan: dict | None = None
-    activity_index: int = 0
-    autonomous_turns_used: int = 0
-    awaiting_user: bool = True
-
-    def transcript_text(self):
-        lines = [f"נושא השיעור: {self.topic}"]
-        for m in self.history[-HISTORY_WINDOW:]:
-            lines.append(f"{m.display_name}: {m.content}")
-        return "\n".join(lines)
-
-    def full_transcript_text(self):
-        """Unlike transcript_text (windowed, used to keep per-turn prompts
-        small), this includes the whole lesson — a quiz should be able to
-        draw on anything discussed, not just the last few exchanges."""
-        lines = [f"נושא השיעור: {self.topic}"]
-        for m in self.history:
-            lines.append(f"{m.display_name}: {m.content}")
-        return "\n".join(lines)
-
-
-SESSIONS = {}
-
-TECHNICAL_KEYWORDS = [
-    "מתמטיקה", "פיזיקה", "כימיה", "אלגברה", "חדו\"א", "נוסחה", "משוואה",
-    "קוד", "תכנות", "אלגוריתם", "ביולוגיה", "סטטיסטיקה",
-]
-NARRATIVE_KEYWORDS = [
-    "היסטוריה", "ערכים", "ספרות", "פילוסופיה", "חברה", "פסיכולוגיה", "אתיקה", "תנ\"ך",
-]
-
-
-def choose_pool(topic: str):
-    t = topic.lower()
-    if any(k in topic for k in TECHNICAL_KEYWORDS):
-        return [DEEP_DIVER, SIMPLIFIER]
-    if any(k in topic for k in NARRATIVE_KEYWORDS):
-        return [STUDENT_DANI, CONNECTOR]
-    return random.sample(POOL, 2)
-
-
-def resolve_pool(topic: str, pool_keys: list | None = None) -> list:
-    if pool_keys:
-        pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY and AGENTS_BY_KEY[k] in POOL]
-        if len(pool) != 2:
-            raise ValueError("pool_keys must name exactly 2 valid pool agents")
-        return pool
-    return choose_pool(topic)
-
-
-def create_session(
-    topic: str, pool_keys: list | None = None, user_email: str | None = None, plan: dict | None = None
-) -> Session:
-    pool = resolve_pool(topic, pool_keys)
-    # A lesson with a plan starts "mid-activity" (not yet waiting on the
-    # student) so the classroom can open on its own, like a teacher who
-    # walks in and starts teaching instead of standing there silently.
-    session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool, plan=plan, awaiting_user=not plan)
-    SESSIONS[session.id] = session
-    db.insert_lesson(
-        session.id, session.topic,
-        ",".join(a.key for a in session.pool),
-        session.next_jester_round,
-        user_email=user_email,
-        plan=plan,
-        awaiting_user=session.awaiting_user,
-    )
-    return session
-
-
-def get_session(session_id: str) -> Session:
-    if session_id in SESSIONS:
-        return SESSIONS[session_id]
-
-    # Not cached in this process (e.g. restarted, or a different Render instance) —
-    # try to rehydrate it from the database before giving up.
-    lesson = db.load_lesson(session_id)
-    if not lesson:
-        raise KeyError("session not found")
-
-    pool_keys = lesson["pool_keys"].split(",")
-    pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY]
-    session = Session(
-        id=session_id,
-        topic=lesson["topic"],
-        pool=pool,
-        round_count=lesson["round_count"],
-        pool_turn_index=lesson["pool_turn_index"],
-        next_jester_round=lesson["next_jester_round"],
-        plan=lesson.get("plan"),
-        activity_index=lesson.get("activity_index", 0),
-        autonomous_turns_used=lesson.get("autonomous_turns_used", 0),
-        awaiting_user=lesson.get("awaiting_user", True),
-    )
-    for row in db.load_messages(session_id):
-        session.history.append(
-            ChatMessage(row["agent_key"], row["display_name"], row["color"], row["content"])
-        )
-    SESSIONS[session_id] = session
-    return session
-
-
-AGENT_MAX_TOKENS = 1024
-VERIFIER_MAX_TOKENS = 300
-
-LATEX_INSTRUCTION = (
-    "אם בתשובה שלך יש נוסחה מתמטית, כתוב אותה בפורמט LaTeX: נוסחה בתוך השורה בין $ $ "
-    "(למשל $x^2+1$), ונוסחה בשורה נפרדת בין $$ $$. אל תשתמש בפורמט הזה לשום דבר חוץ מנוסחאות. "
-)
-
-
-def _build_user_content(text: str, image: dict | None):
-    """Plain string when there's no image (unchanged, minimal request shape);
-    a content-block list with an image block when there is one — only the
-    teacher ever receives `image`, so it can actually look at what the
-    student uploaded instead of just reading a '[image attached]' note."""
-    if not image:
-        return text
-    return [
-        {
-            "type": "image",
-            "source": {"type": "base64", "media_type": image["media_type"], "data": image["data"]},
-        },
-        {"type": "text", "text": text},
-    ]
-
-
-def _call_agent(
-    agent, transcript: str, extra_instruction: str = "", api_key: str | None = None, image: dict | None = None
-) -> str:
-    user_text = (
-        f"{transcript}\n\n"
-        f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
-        f"{extra_instruction}"
-        f"{LATEX_INSTRUCTION}"
-        "כתוב רק את התגובה שלך, בלי לציין את שמך."
-    )
-    response = _get_client(api_key).messages.create(
-        model=MODEL,
-        max_tokens=AGENT_MAX_TOKENS,
-        system=agent.system_prompt,
-        messages=[{"role": "user", "content": _build_user_content(user_text, image)}],
-    )
-    block_types = [b.type for b in response.content]
-    text = "".join(block.text for block in response.content if block.type == "text").strip()
-    print(
-        f"[_call_agent] agent={agent.key} stop_reason={response.stop_reason} "
-        f"blocks={block_types} usage={response.usage} text_len={len(text)}"
-    )
-    if not text:
-        # Defensive fallback: an empty reply (e.g. truncated generation) must never
-        # be fed back into the transcript, since that poisons later turns.
-        text = "(לא הצלחתי לנסח תגובה הפעם, נסה לנסח את השאלה מעט אחרת.)"
-    return text
-
-
-def _call_agent_stream(agent, transcript: str, api_key: str | None = None):
-    """Like _call_agent, but yields text deltas as they arrive from the model
-    instead of waiting for the full response. Used for agents that don't need
-    verification (everyone except the teacher), where there's no reason to
-    hold text back from the user."""
-    user_content = (
-        f"{transcript}\n\n"
-        f"הגב כעת כ-{agent.display_name}, בהתאם לכללים שלך. "
-        f"{LATEX_INSTRUCTION}"
-        "כתוב רק את התגובה שלך, בלי לציין את שמך."
-    )
-    with _get_client(api_key).messages.stream(
-        model=MODEL,
-        max_tokens=AGENT_MAX_TOKENS,
-        system=agent.system_prompt,
-        messages=[{"role": "user", "content": user_content}],
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
-
-
-def _word_chunks(text: str):
-    """Split already-generated text into word-sized pieces so it can be
-    'replayed' to the client incrementally — used for the teacher's answer,
-    which must be fully generated and verified before any of it is shown."""
-    parts = text.split(" ")
-    for i, part in enumerate(parts):
-        yield part + (" " if i < len(parts) - 1 else "")
-
-
-def _verify_teacher_answer(topic: str, answer: str, api_key: str | None = None) -> tuple[bool, str]:
-    verify_prompt = f"נושא: {topic}\n\nתשובת המורה:\n{answer}"
-    response = _get_client(api_key).messages.create(
-        model=VERIFIER_MODEL,
-        max_tokens=VERIFIER_MAX_TOKENS,
-        system=VERIFIER_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": verify_prompt}],
-    )
-    verdict = "".join(block.text for block in response.content if block.type == "text").strip()
-    if not verdict or verdict.startswith("תקין"):
-        # Treat an empty/unparseable verdict as "pass" rather than looping forever.
-        return True, ""
-    return False, verdict
-
-
-def _get_validated_teacher_reply(session: Session, api_key: str | None = None, image: dict | None = None) -> str:
-    transcript = session.transcript_text()
-    answer = _call_agent(TEACHER, transcript, api_key=api_key, image=image)
-    for _ in range(MAX_VERIFY_RETRIES):
-        ok, reason = _verify_teacher_answer(session.topic, answer, api_key=api_key)
-        if ok:
-            return answer
-        answer = _call_agent(
-            TEACHER,
-            transcript,
-            extra_instruction=(
-                f"שים לב: הניסיון הקודם שלך הכיל טעות עובדתית ({reason}). "
-                "תקן אותה בתשובה הבאה. "
-            ),
-            api_key=api_key,
-            image=image,
-        )
-    return answer
-
-
-def _remember(session: Session, msg: ChatMessage):
-    session.history.append(msg)
-    db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
 
 
 def handle_user_message(
     session: Session, user_text: str, api_key: str | None = None, image: dict | None = None
 ) -> list:
     display_text = user_text + (" 📎 [תמונה מצורפת]" if image else "")
-    _remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
+    remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
     session.round_count += 1
 
     replies = []
 
-    teacher_text = _get_validated_teacher_reply(session, api_key=api_key, image=image)
+    teacher_text = get_validated_teacher_reply(session, api_key=api_key, image=image)
     teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
-    _remember(session, teacher_msg)
+    remember(session, teacher_msg)
     replies.append(teacher_msg)
 
     pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
     session.pool_turn_index += 1
-    pool_text = _call_agent(pool_agent, session.transcript_text(), api_key=api_key)
+    pool_text = call_agent(pool_agent, session.transcript_text(), api_key=api_key)
     pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
-    _remember(session, pool_msg)
+    remember(session, pool_msg)
     replies.append(pool_msg)
 
     if session.round_count >= session.next_jester_round:
-        jester_text = _call_agent(JESTER, session.transcript_text(), api_key=api_key)
+        jester_text = call_agent(JESTER, session.transcript_text(), api_key=api_key)
         jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
-        _remember(session, jester_msg)
+        remember(session, jester_msg)
         replies.append(jester_msg)
         session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
 
     db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
     return replies
-
-
-TEACHER_REPLAY_DELAY = 0.02  # seconds between words when "replaying" the already-verified teacher answer
 
 
 def handle_user_message_stream(
@@ -355,69 +79,50 @@ def handle_user_message_stream(
     """
     try:
         display_text = user_text + (" 📎 [תמונה מצורפת]" if image else "")
-        _remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
+        remember(session, ChatMessage("user", "את/ה", "#111827", display_text))
         session.round_count += 1
 
         # --- Teacher: verify silently, then replay the validated text ---
-        teacher_text = _get_validated_teacher_reply(session, api_key=api_key, image=image)
+        teacher_text = get_validated_teacher_reply(session, api_key=api_key, image=image)
         yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
-        for chunk in _word_chunks(teacher_text):
+        for chunk in word_chunks(teacher_text):
             yield {"type": "token", "text": chunk}
             time.sleep(TEACHER_REPLAY_DELAY)
         yield {"type": "end"}
         teacher_msg = ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, teacher_text)
-        _remember(session, teacher_msg)
+        remember(session, teacher_msg)
 
         # --- Pool agent: live model stream ---
         pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
         session.pool_turn_index += 1
         yield {"type": "start", "key": pool_agent.key, "name": pool_agent.display_name, "color": pool_agent.color}
         parts = []
-        for chunk in _call_agent_stream(pool_agent, session.transcript_text(), api_key=api_key):
+        for chunk in call_agent_stream(pool_agent, session.transcript_text(), api_key=api_key):
             parts.append(chunk)
             yield {"type": "token", "text": chunk}
         pool_text = "".join(parts).strip() or "(לא הצלחתי לנסח תגובה הפעם, נסה לנסח את השאלה מעט אחרת.)"
         yield {"type": "end"}
         pool_msg = ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, pool_text)
-        _remember(session, pool_msg)
+        remember(session, pool_msg)
 
         # --- Jester cameo: live model stream, rare rounds only ---
         if session.round_count >= session.next_jester_round:
             yield {"type": "start", "key": JESTER.key, "name": JESTER.display_name, "color": JESTER.color}
             parts = []
-            for chunk in _call_agent_stream(JESTER, session.transcript_text(), api_key=api_key):
+            for chunk in call_agent_stream(JESTER, session.transcript_text(), api_key=api_key):
                 parts.append(chunk)
                 yield {"type": "token", "text": chunk}
             jester_text = "".join(parts).strip() or "..."
             yield {"type": "end"}
             jester_msg = ChatMessage(JESTER.key, JESTER.display_name, JESTER.color, jester_text)
-            _remember(session, jester_msg)
+            remember(session, jester_msg)
             session.next_jester_round = session.round_count + random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX)
 
         db.update_lesson_state(session.id, session.round_count, session.pool_turn_index, session.next_jester_round)
 
-        if session.plan:
-            # The user's reply answers the current activity's checkpoint
-            # question, so move on to the next activity and let the
-            # classroom resume on its own — the frontend keeps calling
-            # /continue/stream while continue=true. If the plan is
-            # exhausted, the lesson just keeps going free-form from here.
-            activities = session.plan.get("activities", [])
-            session.activity_index += 1
-            session.autonomous_turns_used = 0
-            more_activities_left = session.activity_index < len(activities)
-            session.awaiting_user = not more_activities_left
-            db.update_lesson_plan_state(
-                session.id, session.activity_index, session.autonomous_turns_used, session.awaiting_user
-            )
-            yield {
-                "type": "done",
-                "continue": more_activities_left,
-                "awaiting_user": session.awaiting_user,
-                "activity_index": session.activity_index,
-            }
-        else:
-            yield {"type": "done"}
+        # No-op ({}) for a plan-less "review" session — see lesson_plan.py.
+        extra = advance_after_checkpoint(session)
+        yield {"type": "done", **extra}
 
     except MissingApiKeyError:
         yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
@@ -425,176 +130,4 @@ def handle_user_message_stream(
         yield {"type": "error", "detail": "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."}
     except Exception as e:
         print(f"[handle_user_message_stream] unexpected error: {e!r}")
-        yield {"type": "error", "detail": "משהו השתבש בצד השרת. נסה שוב."}
-
-
-QUIZ_MODEL = os.environ.get("CLASSROOM_QUIZ_MODEL", MODEL)
-QUIZ_MAX_TOKENS = 1500
-QUIZ_MAX_RETRIES = 2
-
-
-class QuizGenerationError(Exception):
-    pass
-
-
-def _extract_json(raw: str):
-    """The model is instructed to return raw JSON, but models occasionally
-    wrap it in a ```json code fence anyway — strip that defensively before
-    parsing instead of failing over a formatting slip. Works for a JSON
-    array (quiz) or a JSON object (lesson plan) alike."""
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    return json.loads(text)
-
-
-def generate_quiz(session: Session, api_key: str | None = None) -> list:
-    user_content = session.full_transcript_text()
-    last_error = None
-    for _ in range(QUIZ_MAX_RETRIES):
-        response = _get_client(api_key).messages.create(
-            model=QUIZ_MODEL,
-            max_tokens=QUIZ_MAX_TOKENS,
-            system=QUIZ_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
-        raw = "".join(b.text for b in response.content if b.type == "text").strip()
-        try:
-            questions = _extract_json(raw)
-            if not isinstance(questions, list) or not questions:
-                raise ValueError("expected a non-empty JSON array")
-            for q in questions:
-                if not (isinstance(q.get("options"), list) and len(q["options"]) >= 2):
-                    raise ValueError("question missing valid options")
-                if not isinstance(q.get("correct_index"), int):
-                    raise ValueError("question missing correct_index")
-            return questions
-        except (json.JSONDecodeError, ValueError, AttributeError) as e:
-            last_error = e
-            print(f"[generate_quiz] malformed quiz JSON, retrying: {e}; raw={raw[:300]!r}")
-
-    raise QuizGenerationError(f"לא הצלחתי לבנות בוחן תקין: {last_error}")
-
-
-LESSON_PLAN_MODEL = os.environ.get("CLASSROOM_LESSON_PLAN_MODEL", MODEL)
-LESSON_PLAN_MAX_TOKENS = 1500
-LESSON_PLAN_MAX_RETRIES = 2
-DEFAULT_AUTONOMOUS_EXCHANGES = 1
-
-
-class LessonPlanGenerationError(Exception):
-    pass
-
-
-def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> dict:
-    """A lesson plan is generated once, as a preview the user can approve or
-    regenerate, before any session/DB row exists — same spirit as
-    generate_quiz, just earlier in the lifecycle and shaped as an object
-    instead of an array."""
-    pool_names = ", ".join(a.display_name for a in pool)
-    user_content = f"נושא השיעור: {topic}\nהתלמידים שישתתפו: {pool_names}"
-    last_error = None
-    for _ in range(LESSON_PLAN_MAX_RETRIES):
-        response = _get_client(api_key).messages.create(
-            model=LESSON_PLAN_MODEL,
-            max_tokens=LESSON_PLAN_MAX_TOKENS,
-            system=LESSON_PLAN_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
-        raw = "".join(b.text for b in response.content if b.type == "text").strip()
-        try:
-            plan = _extract_json(raw)
-            if not isinstance(plan, dict):
-                raise ValueError("expected a JSON object")
-            if not (isinstance(plan.get("goals"), list) and plan["goals"]):
-                raise ValueError("missing goals")
-            activities = plan.get("activities")
-            if not (isinstance(activities, list) and activities):
-                raise ValueError("missing activities")
-            for a in activities:
-                if not (isinstance(a.get("title"), str) and a["title"]):
-                    raise ValueError("activity missing title")
-                if not isinstance(a.get("checkpoint_question"), str):
-                    raise ValueError("activity missing checkpoint_question")
-                raw_exchanges = a.get("autonomous_exchanges")
-                a["autonomous_exchanges"] = int(raw_exchanges) if raw_exchanges is not None else DEFAULT_AUTONOMOUS_EXCHANGES
-            return plan
-        except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
-            last_error = e
-            print(f"[generate_lesson_plan] malformed plan JSON, retrying: {e}; raw={raw[:300]!r}")
-
-    raise LessonPlanGenerationError(f"לא הצלחתי לבנות מערך שיעור תקין: {last_error}")
-
-
-def advance_lesson_stream(session: Session, api_key: str | None = None):
-    """Generator (same SSE event shape as handle_user_message_stream) that
-    produces exactly ONE autonomous 'beat' of a plan-driven lesson, without
-    any new user message: either a pool-agent reaction (the classroom
-    talking amongst itself) or, once the current activity's autonomous
-    budget is spent, the teacher's pre-written checkpoint question — at
-    which point the lesson pauses and waits for the real student again.
-
-    The frontend calls this in a loop (with a short delay between calls, for
-    pacing) while the previous call's "done" event says continue=true.
-    """
-    try:
-        if not session.plan:
-            yield {"type": "done", "continue": False, "awaiting_user": True}
-            return
-
-        activities = session.plan.get("activities", [])
-        if session.activity_index >= len(activities):
-            session.awaiting_user = True
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
-            yield {"type": "done", "continue": False, "awaiting_user": True}
-            return
-
-        activity = activities[session.activity_index]
-        budget = activity.get("autonomous_exchanges", DEFAULT_AUTONOMOUS_EXCHANGES)
-
-        if session.autonomous_turns_used < budget:
-            # The classroom talks amongst itself: the pool agent whose turn
-            # it is reacts to the activity and what's been said so far.
-            pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
-            session.pool_turn_index += 1
-            transcript = session.transcript_text() + f"\n\n[פעילות נוכחית במערך השיעור: {activity['title']} — {activity.get('summary', '')}]"
-            yield {"type": "start", "key": pool_agent.key, "name": pool_agent.display_name, "color": pool_agent.color}
-            parts = []
-            for chunk in _call_agent_stream(pool_agent, transcript, api_key=api_key):
-                parts.append(chunk)
-                yield {"type": "token", "text": chunk}
-            text = "".join(parts).strip() or "..."
-            yield {"type": "end"}
-            _remember(session, ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, text))
-
-            session.autonomous_turns_used += 1
-            still_more_in_activity = session.autonomous_turns_used < budget
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, False)
-            yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}
-        else:
-            # Budget spent — the teacher asks the activity's pre-written
-            # checkpoint question (no extra model call needed for this one;
-            # it was already written when the plan was generated) and the
-            # lesson pauses for the real student.
-            question = activity["checkpoint_question"]
-            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
-            for chunk in _word_chunks(question):
-                yield {"type": "token", "text": chunk}
-                time.sleep(TEACHER_REPLAY_DELAY)
-            yield {"type": "end"}
-            _remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, question))
-
-            session.awaiting_user = True
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
-            yield {"type": "done", "continue": False, "awaiting_user": True, "activity_index": session.activity_index}
-
-    except MissingApiKeyError:
-        yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
-    except anthropic.AuthenticationError:
-        yield {"type": "error", "detail": "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."}
-    except Exception as e:
-        print(f"[advance_lesson_stream] unexpected error: {e!r}")
         yield {"type": "error", "detail": "משהו השתבש בצד השרת. נסה שוב."}

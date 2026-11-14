@@ -20,6 +20,8 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 import orchestrator
+import session_state
+from agent_calls import MissingApiKeyError
 from agents import AGENTS_BY_KEY, POOL, TEACHER
 
 logger = logging.getLogger("slack_bot")
@@ -87,7 +89,7 @@ def _post_as(agent, channel: str, text: str, thread_ts: str | None = None):
 
 
 def _start_lesson(channel: str, topic: str, thread_ts: str | None = None):
-    session = orchestrator.create_session(topic)
+    session = session_state.create_session(topic)
     CHANNEL_SESSIONS[channel] = session.id
     pool_names = ", ".join(a.display_name for a in session.pool)
     if _slack_client:
@@ -113,7 +115,7 @@ def _handle_user_text(channel: str, user_id: str, text: str, thread_ts: str | No
             )
         return
     try:
-        session = orchestrator.get_session(session_id)
+        session = session_state.get_session(session_id)
     except KeyError:
         CHANNEL_SESSIONS.pop(channel, None)
         return
@@ -133,7 +135,7 @@ def _handle_user_text(channel: str, user_id: str, text: str, thread_ts: str | No
 
     try:
         replies = orchestrator.handle_user_message(session, text, api_key=api_key)
-    except orchestrator.MissingApiKeyError:
+    except MissingApiKeyError:
         return  # already handled above
     except Exception as e:
         # Covers an invalid/revoked key (anthropic.AuthenticationError etc.) without

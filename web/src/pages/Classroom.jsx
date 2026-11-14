@@ -5,7 +5,8 @@ import ChatPanel from "../components/ChatPanel";
 import SettingsModal from "../components/SettingsModal";
 import QuizModal from "../components/QuizModal";
 import AuthArea from "../components/AuthArea";
-import { createSession, getSession, getStoredApiKey } from "../lib/api";
+import { createSession, getSession } from "../lib/api/session";
+import { getStoredApiKey } from "../lib/api/apiKey";
 import "./Classroom.css";
 
 export default function Classroom() {

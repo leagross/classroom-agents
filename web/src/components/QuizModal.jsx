@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchQuiz } from "../lib/api";
+import { fetchQuiz } from "../lib/api/chat";
 import renderMath from "../hooks/useMathRender";
 import "./QuizModal.css";
 

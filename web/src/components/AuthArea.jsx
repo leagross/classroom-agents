@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAuthStatus, getMe, logout } from "../lib/api";
+import { getAuthStatus, getMe, logout } from "../lib/api/auth";
 import "./AuthArea.css";
 
 export default function AuthArea({ refreshKey }) {

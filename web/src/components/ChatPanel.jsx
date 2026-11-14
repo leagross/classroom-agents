@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessageStream, continueLessonStream } from "../lib/api";
+import { sendMessageStream } from "../lib/api/chat";
 import useSpeechRecognition from "../hooks/useSpeechRecognition";
 import useTextToSpeech from "../hooks/useTextToSpeech";
+import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const AUTO_CONTINUE_DELAY_MS = 1500;
-const MAX_AUTO_CONTINUE_ITERATIONS = 8; // safety cap against a runaway loop
 
 function initials(name) {
   return (name || "").replace(/^ה/, "").slice(0, 2);
@@ -32,23 +31,17 @@ export default function ChatPanel({
   const [pendingImage, setPendingImage] = useState(null);
   const [streaming, setStreaming] = useState(null); // {name, color, text}
   const [waiting, setWaiting] = useState(false);
-  const [activityIndex, setActivityIndex] = useState(initialActivityIndex || 0);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
-  const autoPlayTokenRef = useRef({ cancelled: true });
   const tts = useTextToSpeech();
+
+  const { activityIndex, preempt, handleDone } = useLessonAutoplay({
+    sessionId, plan, initialActivityIndex, initialAwaitingUser, runStream,
+  });
 
   useEffect(() => {
     setMessages(initialHistory || []);
-    setActivityIndex(initialActivityIndex || 0);
-    autoPlayTokenRef.current.cancelled = true;
-    const token = { cancelled: false };
-    autoPlayTokenRef.current = token;
-    if (plan && !initialAwaitingUser) {
-      scheduleAutoPlay(token, 0);
-    }
-    return () => { token.cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -95,19 +88,6 @@ export default function ChatPanel({
     return doneEvent;
   }
 
-  function scheduleAutoPlay(token, iteration) {
-    if (!plan || token.cancelled || iteration >= MAX_AUTO_CONTINUE_ITERATIONS) return;
-    setTimeout(() => runAutoPlayStep(token, iteration), AUTO_CONTINUE_DELAY_MS);
-  }
-
-  async function runAutoPlayStep(token, iteration) {
-    if (token.cancelled) return;
-    const doneEvent = await runStream((onEvent) => continueLessonStream(sessionId, onEvent));
-    if (token.cancelled || !doneEvent) return;
-    if (typeof doneEvent.activity_index === "number") setActivityIndex(doneEvent.activity_index);
-    if (doneEvent.continue) scheduleAutoPlay(token, iteration + 1);
-  }
-
   function onFileChange(e) {
     const file = e.target.files[0];
     e.target.value = "";
@@ -133,9 +113,7 @@ export default function ChatPanel({
     if (!text && !pendingImage) return;
 
     // The user taking their turn always wins over a scheduled autonomous beat.
-    autoPlayTokenRef.current.cancelled = true;
-    const myToken = { cancelled: false };
-    autoPlayTokenRef.current = myToken;
+    const myToken = preempt();
 
     const userMsg = {
       agent: "את/ה",
@@ -156,8 +134,7 @@ export default function ChatPanel({
     );
     setWaiting(false);
 
-    if (doneEvent && typeof doneEvent.activity_index === "number") setActivityIndex(doneEvent.activity_index);
-    if (doneEvent && doneEvent.continue) scheduleAutoPlay(myToken, 0);
+    handleDone(doneEvent, myToken);
   }
 
   const currentActivity = plan?.activities?.[activityIndex];

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import NavBar from "../components/NavBar";
-import { getMe, getBillingStatus, startCheckout } from "../lib/api";
+import { getMe } from "../lib/api/auth";
+import { getBillingStatus, startCheckout } from "../lib/api/billing";
 import "./Pricing.css";
 
 const FREE_FEATURES = [

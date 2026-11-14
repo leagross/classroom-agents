@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { getAgents, generateLessonPlan } from "../lib/api";
+import { getAgents } from "../lib/api/session";
+import { generateLessonPlan } from "../lib/api/lessonPlan";
 import LessonPlanPreview from "./LessonPlanPreview";
 import "./SetupForm.css";
 

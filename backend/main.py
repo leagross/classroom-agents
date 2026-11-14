@@ -15,8 +15,12 @@ from starlette.middleware.sessions import SessionMiddleware
 import auth
 import billing
 import db
+import lesson_plan
 import orchestrator
+import quiz
+import session_state
 import slack_bot
+from agent_calls import MissingApiKeyError
 from agents import POOL, TEACHER
 
 WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")
@@ -87,13 +91,13 @@ def create_lesson_plan(req: LessonPlanRequest, x_anthropic_key: str | None = Hea
     regenerate before any session/DB row exists. Creating the actual session
     (POST /api/session) with the approved plan attached is a separate step."""
     try:
-        pool = orchestrator.resolve_pool(req.topic, req.pool_keys)
+        pool = session_state.resolve_pool(req.topic, req.pool_keys)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        plan = orchestrator.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key)
-    except orchestrator.MissingApiKeyError:
+        plan = lesson_plan.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key)
+    except MissingApiKeyError:
         raise HTTPException(
             status_code=401,
             detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
@@ -103,7 +107,7 @@ def create_lesson_plan(req: LessonPlanRequest, x_anthropic_key: str | None = Hea
             status_code=401,
             detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
         )
-    except orchestrator.LessonPlanGenerationError as e:
+    except lesson_plan.LessonPlanGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"plan": plan, "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in pool]}
 
@@ -114,7 +118,7 @@ def create_session(req: CreateSessionRequest, request: Request):
     user_email = user["email"] if user else None
     billing.check_lesson_quota(user_email)
     try:
-        session = orchestrator.create_session(
+        session = session_state.create_session(
             req.topic, pool_keys=req.pool_keys, user_email=user_email, plan=req.plan
         )
     except ValueError as e:
@@ -135,7 +139,7 @@ def get_session(session_id: str):
     rehydrated from the DB (e.g. after a restart, or opened on another device
     for a logged-in user)."""
     try:
-        session = orchestrator.get_session(session_id)
+        session = session_state.get_session(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
     return {
@@ -174,7 +178,7 @@ def _image_dict(image: ImageAttachment | None) -> dict | None:
 def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(default=None)):
     _validate_image(req.image)
     try:
-        session = orchestrator.get_session(req.session_id)
+        session = session_state.get_session(req.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
@@ -182,7 +186,7 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
         replies = orchestrator.handle_user_message(
             session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
         )
-    except orchestrator.MissingApiKeyError:
+    except MissingApiKeyError:
         raise HTTPException(
             status_code=401,
             detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
@@ -216,7 +220,7 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
     return a normal HTTP error status."""
     _validate_image(req.image)
     try:
-        session = orchestrator.get_session(req.session_id)
+        session = session_state.get_session(req.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
@@ -240,12 +244,12 @@ def continue_lesson_stream(session_id: str, x_anthropic_key: str | None = Header
     text — produces exactly one autonomous 'beat' of a plan-driven lesson.
     See orchestrator.advance_lesson_stream for the state machine."""
     try:
-        session = orchestrator.get_session(session_id)
+        session = session_state.get_session(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
     def event_source():
-        for event in orchestrator.advance_lesson_stream(session, api_key=x_anthropic_key):
+        for event in lesson_plan.advance_lesson_stream(session, api_key=x_anthropic_key):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -258,7 +262,7 @@ def continue_lesson_stream(session_id: str, x_anthropic_key: str | None = Header
 @app.post("/api/session/{session_id}/quiz")
 def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=None)):
     try:
-        session = orchestrator.get_session(session_id)
+        session = session_state.get_session(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
@@ -266,8 +270,8 @@ def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=No
         raise HTTPException(status_code=400, detail="אין עדיין מספיק שיחה בשיעור כדי לבנות בוחן.")
 
     try:
-        questions = orchestrator.generate_quiz(session, api_key=x_anthropic_key)
-    except orchestrator.MissingApiKeyError:
+        questions = quiz.generate_quiz(session, api_key=x_anthropic_key)
+    except MissingApiKeyError:
         raise HTTPException(
             status_code=401,
             detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
@@ -277,7 +281,7 @@ def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=No
             status_code=401,
             detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
         )
-    except orchestrator.QuizGenerationError as e:
+    except quiz.QuizGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"questions": questions}
 

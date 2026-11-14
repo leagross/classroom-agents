@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getMe, getMyLessons } from "../lib/api";
+import { getMe, getMyLessons } from "../lib/api/auth";
 import "./Sidebar.css";
 
 const RECENT_LESSONS_STORAGE = "classroom_recent_lessons";
