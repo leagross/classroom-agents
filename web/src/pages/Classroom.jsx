@@ -110,6 +110,7 @@ export default function Classroom() {
         <div className="classroom-content">
           {session ? (
             <ChatPanel
+              key={session.id}
               sessionId={session.id}
               topic={session.topic}
               poolNames={session.poolNames}
