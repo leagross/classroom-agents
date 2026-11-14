@@ -5,6 +5,7 @@ import SyllabusBuilder from "../components/SyllabusBuilder";
 import SyllabusView from "../components/SyllabusView";
 import ChatPanel from "../components/ChatPanel";
 import SettingsModal from "../components/SettingsModal";
+import DashboardModal from "../components/DashboardModal";
 import AuthArea from "../components/AuthArea";
 import { createSession, getSession } from "../lib/api/session";
 import { getSyllabus } from "../lib/api/syllabus";
@@ -28,6 +29,7 @@ export default function Classroom() {
   const [syllabus, setSyllabus] = useState(null); // { id, topic, lessons } — the outline list view
   const [entryMode, setEntryMode] = useState("single"); // "single" | "syllabus" — only matters with no session/syllabus
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const [hasKey, setHasKey] = useState(!!getStoredApiKey());
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
 
@@ -100,6 +102,7 @@ export default function Classroom() {
       <div className="classroom-main">
         <div className="classroom-topbar">
           <button className="settings-btn" title="מפתח API אישי" onClick={() => setSettingsOpen(true)}>🔑</button>
+          <button className="settings-btn" title="ההתקדמות שלי" onClick={() => setDashboardOpen(true)}>📊</button>
           <div className="spacer" />
           <AuthArea refreshKey={sidebarRefresh} />
         </div>
@@ -154,6 +157,7 @@ export default function Classroom() {
         onClose={() => setSettingsOpen(false)}
         onKeyChange={() => setHasKey(!!getStoredApiKey())}
       />
+      <DashboardModal open={dashboardOpen} onClose={() => setDashboardOpen(false)} />
     </div>
   );
 }

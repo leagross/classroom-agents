@@ -189,7 +189,7 @@ def list_lessons_for_user(user_email: str, limit: int = 20):
         rows = conn.execute(
             text(
                 """
-                SELECT id, topic, round_count, created_at
+                SELECT id, topic, round_count, created_at, plan, activity_index, awaiting_user
                 FROM lessons
                 WHERE user_email = :user_email
                 ORDER BY created_at DESC
@@ -198,7 +198,10 @@ def list_lessons_for_user(user_email: str, limit: int = 20):
             ),
             {"user_email": user_email, "limit": limit},
         ).mappings().all()
-        return [dict(r) for r in rows]
+        lessons = [dict(r) for r in rows]
+        for lesson in lessons:
+            lesson["plan"] = json.loads(lesson["plan"]) if lesson.get("plan") else None
+        return lessons
 
 
 def load_lesson(lesson_id: str):

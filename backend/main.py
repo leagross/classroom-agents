@@ -275,6 +275,56 @@ def list_lessons(request: Request):
     return {"lessons": db.list_lessons_for_user(user["email"])}
 
 
+def _lesson_status(lesson: dict) -> str:
+    """A "review" lesson has no defined end, so it's never in_progress/
+    completed in the dashboard's sense — just its own thing. A plan-driven
+    lesson is completed once it's paused (awaiting_user) past its last
+    activity, in_progress otherwise."""
+    if not lesson.get("plan"):
+        return "review"
+    total_activities = len(lesson["plan"].get("activities", []))
+    if lesson.get("awaiting_user") and lesson.get("activity_index", 0) >= total_activities:
+        return "completed"
+    return "in_progress"
+
+
+@app.get("/api/dashboard")
+def get_dashboard(request: Request):
+    """Aggregate progress view for a signed-in user: how many lessons/
+    syllabi they've completed or are mid-way through, and which topics
+    they've covered — built from the same rows /api/lessons and /api/syllabi
+    already expose, just summarized."""
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="not signed in")
+    email = user["email"]
+
+    lessons = db.list_lessons_for_user(email, limit=100)
+    for lesson in lessons:
+        lesson["status"] = _lesson_status(lesson)
+        lesson.pop("plan", None)  # the full plan isn't needed by the dashboard view
+
+    syllabi = db.list_syllabi_for_user(email, limit=50)
+    syllabus_summaries = [
+        {
+            "id": s["id"],
+            "topic": s["topic"],
+            "total_lessons": len(s["lessons"]),
+            "completed_lessons": sum(1 for l in s["lessons"] if l["status"] == "completed"),
+        }
+        for s in syllabi
+    ]
+
+    return {
+        "total_lessons": len(lessons),
+        "completed_lessons": sum(1 for l in lessons if l["status"] == "completed"),
+        "in_progress_lessons": sum(1 for l in lessons if l["status"] == "in_progress"),
+        "topics_covered": sorted({l["topic"] for l in lessons}),
+        "syllabi": syllabus_summaries,
+        "recent_lessons": lessons[:10],
+    }
+
+
 def _image_dict(image: ImageAttachment | None) -> dict | None:
     return {"media_type": image.media_type, "data": image.data} if image else None
 

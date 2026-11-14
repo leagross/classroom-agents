@@ -1,0 +1,38 @@
+.dashboard-modal { max-width: 440px; }
+.dashboard-modal h4 { margin: 16px 0 8px; font-size: 14px; color: var(--p1); }
+
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.stat-tile {
+  text-align: center;
+  padding: 12px 6px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1.5px solid var(--border);
+}
+.stat-num { font-size: 22px; font-weight: 800; color: var(--p1); }
+.stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.topics-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.topic-chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(147, 51, 234, 0.08);
+  color: var(--p2);
+}
+
+.dashboard-syllabi { display: flex; flex-direction: column; gap: 6px; }
+.dashboard-syllabus-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.syllabus-progress { color: var(--muted); font-weight: 600; }
