@@ -122,6 +122,19 @@ def handle_user_message_stream(
 
         # No-op ({}) for a plan-less "review" session — see lesson_plan.py.
         extra = advance_after_checkpoint(session)
+
+        # If the plan just ended with homework to hand out, that's delivered
+        # as one more teacher message (replayed like the checkpoint question,
+        # since it's pre-written text, not a live model call) before "done".
+        homework = extra.pop("homework", None)
+        if homework:
+            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
+            for chunk in word_chunks(homework):
+                yield {"type": "token", "text": chunk}
+                time.sleep(TEACHER_REPLAY_DELAY)
+            yield {"type": "end"}
+            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, homework))
+
         yield {"type": "done", **extra}
 
     except MissingApiKeyError:

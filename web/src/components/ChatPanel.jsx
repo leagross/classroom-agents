@@ -4,6 +4,7 @@ import useSpeechRecognition from "../hooks/useSpeechRecognition";
 import useTextToSpeech from "../hooks/useTextToSpeech";
 import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
+import { stageLabel } from "../lib/lessonStages";
 import "./ChatPanel.css";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -145,7 +146,7 @@ export default function ChatPanel({
         <button className="home-btn" onClick={onHome} title="חזרה לדף הבית">🏠</button>
         <span className="topic-text">
           נושא: {topic} · הרכב הכיתה: המורה, {(poolNames || []).join(", ")}
-          {plan && currentActivity && ` · שלב ${Math.min(activityIndex + 1, plan.activities.length)}/${plan.activities.length}: ${currentActivity.title}`}
+          {plan && currentActivity && ` · שלב ${Math.min(activityIndex + 1, plan.activities.length)}/${plan.activities.length} (${stageLabel(currentActivity.stage)}): ${currentActivity.title}`}
         </span>
         <button className="quiz-btn" onClick={onOpenQuiz}>📝 בוחן על השיעור</button>
       </div>

@@ -73,8 +73,14 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
                     raise ValueError("activity missing title")
                 if not isinstance(a.get("checkpoint_question"), str):
                     raise ValueError("activity missing checkpoint_question")
+                if not (isinstance(a.get("stage"), str) and a["stage"]):
+                    raise ValueError("activity missing stage")
                 raw_exchanges = a.get("autonomous_exchanges")
                 a["autonomous_exchanges"] = int(raw_exchanges) if raw_exchanges is not None else DEFAULT_AUTONOMOUS_EXCHANGES
+            # Homework is a nice-to-have, not core to the classroom's
+            # mechanics — default it instead of spending a retry over it.
+            if not isinstance(plan.get("homework"), str):
+                plan["homework"] = ""
             return plan
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
             last_error = e
@@ -160,7 +166,13 @@ def advance_after_checkpoint(session: Session) -> dict:
     lesson). Moves on to the next activity and returns the extra fields the
     SSE "done" event should carry so the frontend knows whether to resume
     advance_lesson_stream's loop. Returns {} for a plan-less ("review")
-    session — orchestrator.py doesn't need to know the difference."""
+    session — orchestrator.py doesn't need to know the difference.
+
+    If this move exhausts the plan (the "summary" activity was just
+    answered) and the plan has homework, the extra dict also carries
+    {"homework": "..."} exactly once — orchestrator.py is responsible for
+    turning that into an actual teacher message in the stream, since
+    rendering it isn't this module's job."""
     if not session.plan:
         return {}
     activities = session.plan.get("activities", [])
@@ -171,8 +183,13 @@ def advance_after_checkpoint(session: Session) -> dict:
     db.update_lesson_plan_state(
         session.id, session.activity_index, session.autonomous_turns_used, session.awaiting_user
     )
-    return {
+    extra = {
         "continue": more_activities_left,
         "awaiting_user": session.awaiting_user,
         "activity_index": session.activity_index,
     }
+    homework = session.plan.get("homework")
+    if not more_activities_left and homework and not session.homework_delivered:
+        session.homework_delivered = True
+        extra["homework"] = homework
+    return extra

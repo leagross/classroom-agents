@@ -43,6 +43,11 @@ class Session:
     activity_index: int = 0
     autonomous_turns_used: int = 0
     awaiting_user: bool = True
+    # In-memory only (not persisted): guards against re-delivering the
+    # homework message if this process restarts right at the lesson's last
+    # checkpoint and the student's answer is somehow replayed — an edge
+    # case not worth a DB column for.
+    homework_delivered: bool = False
 
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]

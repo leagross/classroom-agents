@@ -20,8 +20,11 @@
   background: var(--surface-2);
 }
 .activity-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.activity-stage { color: var(--p2); }
 .activity-summary { font-size: 13px; color: var(--ink); margin-bottom: 6px; }
 .activity-meta { font-size: 12px; color: var(--muted); }
+
+.plan-homework { font-size: 13px; color: var(--ink); margin: 0; }
 
 .plan-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .plan-actions .btn { flex: 1; min-width: 120px; }

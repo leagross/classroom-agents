@@ -1,3 +1,4 @@
+import { stageLabel } from "../lib/lessonStages";
 import "./LessonPlanPreview.css";
 
 function planToMarkdown(topic, plan) {
@@ -5,12 +6,15 @@ function planToMarkdown(topic, plan) {
   plan.goals.forEach((g) => lines.push(`- ${g}`));
   lines.push("", "## פעילויות");
   plan.activities.forEach((a, i) => {
-    lines.push(`### ${i + 1}. ${a.title}`);
+    lines.push(`### ${i + 1}. ${stageLabel(a.stage)}: ${a.title}`);
     if (a.summary) lines.push(a.summary);
     lines.push(`- חילופי דברים אוטונומיים: ${a.autonomous_exchanges}`);
     lines.push(`- שאלת בדיקה: ${a.checkpoint_question}`);
     lines.push("");
   });
+  if (plan.homework) {
+    lines.push("## שיעורי בית", plan.homework, "");
+  }
   return lines.join("\n");
 }
 
@@ -40,7 +44,9 @@ export default function LessonPlanPreview({ topic, plan, onStart, onRegenerate, 
       <div className="plan-activities">
         {plan.activities.map((a, i) => (
           <div className="plan-activity" key={i}>
-            <div className="activity-title">{i + 1}. {a.title}</div>
+            <div className="activity-title">
+              {i + 1}. <span className="activity-stage">{stageLabel(a.stage)}</span> — {a.title}
+            </div>
             {a.summary && <div className="activity-summary">{a.summary}</div>}
             <div className="activity-meta">
               {a.autonomous_exchanges > 0
@@ -50,6 +56,13 @@ export default function LessonPlanPreview({ topic, plan, onStart, onRegenerate, 
           </div>
         ))}
       </div>
+
+      {plan.homework && (
+        <>
+          <h4>שיעורי בית</h4>
+          <p className="plan-homework">{plan.homework}</p>
+        </>
+      )}
 
       <div className="plan-actions">
         <button className="btn btn-primary" onClick={onStart}>התחל לפי המערך</button>
