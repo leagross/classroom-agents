@@ -22,6 +22,7 @@ from agent_calls import (
     get_client,
     word_chunks,
 )
+import syllabus
 from agents import LESSON_PLAN_SYSTEM_PROMPT, TEACHER
 from json_utils import extract_json
 from session_state import ChatMessage, Session, remember
@@ -211,4 +212,6 @@ def advance_after_checkpoint(session: Session) -> dict:
     if not more_activities_left and homework and not session.homework_delivered:
         session.homework_delivered = True
         extra["homework"] = homework
+    if not more_activities_left and session.syllabus_id is not None:
+        syllabus.mark_lesson_completed(session.syllabus_id, session.syllabus_lesson_index)
     return extra

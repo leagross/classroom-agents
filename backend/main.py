@@ -20,6 +20,7 @@ import orchestrator
 import quiz
 import session_state
 import slack_bot
+import syllabus
 from agent_calls import MissingApiKeyError
 from agents import POOL, TEACHER
 
@@ -44,11 +45,22 @@ class CreateSessionRequest(BaseModel):
     topic: str
     pool_keys: list[str] | None = None  # exactly 2 keys from POOL, or None for auto-selection
     plan: dict | None = None  # an approved lesson plan from POST /api/lesson-plan; omit for a "review" session
+    syllabus_id: str | None = None  # set together when starting a lesson picked from a syllabus
+    syllabus_lesson_index: int | None = None
 
 
 class LessonPlanRequest(BaseModel):
     topic: str
     pool_keys: list[str] | None = None
+
+
+class SyllabusRequest(BaseModel):
+    topic: str
+
+
+class CreateSyllabusRequest(BaseModel):
+    topic: str
+    lessons: list[dict]
 
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -119,10 +131,16 @@ def create_session(req: CreateSessionRequest, request: Request):
     billing.check_lesson_quota(user_email)
     try:
         session = session_state.create_session(
-            req.topic, pool_keys=req.pool_keys, user_email=user_email, plan=req.plan
+            req.topic, pool_keys=req.pool_keys, user_email=user_email, plan=req.plan,
+            syllabus_id=req.syllabus_id, syllabus_lesson_index=req.syllabus_lesson_index,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if req.syllabus_id is not None and req.syllabus_lesson_index is not None:
+        try:
+            syllabus.mark_lesson_started(req.syllabus_id, req.syllabus_lesson_index, session.id)
+        except KeyError:
+            pass  # the syllabus itself is gone (e.g. DB-less restart) — the lesson still works standalone
     return {
         "session_id": session.id,
         "topic": session.topic,
@@ -159,6 +177,93 @@ def get_session(session_id: str):
         "plan": session.plan,
         "activity_index": session.activity_index,
         "awaiting_user": session.awaiting_user,
+        "syllabus_id": session.syllabus_id,
+    }
+
+
+@app.post("/api/syllabus")
+def create_syllabus_preview(req: SyllabusRequest, x_anthropic_key: str | None = Header(default=None)):
+    """Preview-only, same spirit as POST /api/lesson-plan: breaks a broad
+    topic into a lesson outline (title + summary each) for the user to
+    approve or regenerate, before any syllabus/DB row exists. Each lesson's
+    own full plan is generated separately, lazily, only once started."""
+    try:
+        lessons = syllabus.generate_syllabus(req.topic, api_key=x_anthropic_key)
+    except MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
+    except syllabus.SyllabusGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"topic": req.topic, "lessons": lessons}
+
+
+@app.post("/api/syllabus/create")
+def create_syllabus(req: CreateSyllabusRequest, request: Request):
+    user = request.session.get("user")
+    user_email = user["email"] if user else None
+    syl = syllabus.create_syllabus(req.topic, req.lessons, user_email=user_email)
+    return syl
+
+
+@app.get("/api/syllabus/{syllabus_id}")
+def get_syllabus(syllabus_id: str):
+    try:
+        return syllabus.get_syllabus(syllabus_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="syllabus not found")
+
+
+@app.get("/api/syllabi")
+def list_syllabi(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="not signed in")
+    return {"syllabi": db.list_syllabi_for_user(user["email"])}
+
+
+@app.post("/api/syllabus/{syllabus_id}/lesson/{lesson_index}/plan")
+def create_syllabus_lesson_plan(
+    syllabus_id: str, lesson_index: int, x_anthropic_key: str | None = Header(default=None)
+):
+    """Generates (preview-only, like POST /api/lesson-plan) the full 5-stage
+    plan for one specific lesson in a syllabus — only called when the
+    student actually starts that lesson, not when the syllabus itself was
+    created."""
+    try:
+        syl = syllabus.get_syllabus(syllabus_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="syllabus not found")
+    if not (0 <= lesson_index < len(syl["lessons"])):
+        raise HTTPException(status_code=404, detail="lesson index out of range")
+
+    lesson = syl["lessons"][lesson_index]
+    combined_topic = f"{syl['topic']} — {lesson['title']}"
+    try:
+        pool = session_state.resolve_pool(combined_topic, None)
+        plan = lesson_plan.generate_lesson_plan(combined_topic, pool, api_key=x_anthropic_key)
+    except MissingApiKeyError:
+        raise HTTPException(
+            status_code=401,
+            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
+        )
+    except lesson_plan.LessonPlanGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "topic": combined_topic,
+        "plan": plan,
+        "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in pool],
     }
 
 

@@ -1,0 +1,17 @@
+.syllabus-lessons { display: flex; flex-direction: column; gap: 10px; }
+.syllabus-lesson-row {
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+}
+.syllabus-lesson-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.syllabus-lesson-summary { font-size: 13px; color: var(--ink); margin-bottom: 8px; }
+
+.syllabus-lesson-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.syllabus-status-badge { font-size: 12px; color: var(--muted); }
+.syllabus-lesson-row.status-completed .syllabus-status-badge { color: #16a34a; }
+.syllabus-lesson-row.status-in_progress .syllabus-status-badge { color: var(--p1); }
+
+.syllabus-view { padding: 40px 30px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.syllabus-view h2 { margin: 0; font-size: 24px; }

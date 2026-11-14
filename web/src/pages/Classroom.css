@@ -40,3 +40,27 @@
   max-width: 760px;
   background: var(--surface);
 }
+
+.entry-screen { display: flex; flex-direction: column; overflow-y: auto; }
+
+.entry-mode-choice {
+  display: flex;
+  gap: 10px;
+  padding: 24px 30px 0;
+}
+.entry-mode-btn {
+  flex: 1;
+  text-align: center;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  transition: border-color .15s, background .15s, color .15s;
+}
+.entry-mode-btn:hover { border-color: rgba(147, 51, 234, .4); }
+.entry-mode-btn.selected { border-color: var(--p1); background: rgba(79, 70, 229, .06); color: var(--ink); }

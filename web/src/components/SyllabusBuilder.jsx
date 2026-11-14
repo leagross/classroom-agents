@@ -1,0 +1,94 @@
+import { useState } from "react";
+import { generateSyllabus, createSyllabus } from "../lib/api/syllabus";
+import "./SetupForm.css";
+import "./SyllabusList.css";
+
+/**
+ * Entry point for the "syllabus" flow: a broad topic is broken into a
+ * lesson outline (title + summary each) up front; each lesson's own full
+ * 5-stage plan is generated later, lazily, only once the student starts it
+ * (see SyllabusView). This component only produces the outline and, once
+ * approved, a persisted syllabus — it never touches lesson_plan.py itself.
+ */
+export default function SyllabusBuilder({ hasApiKey, onOpenSettings, onSyllabusReady }) {
+  const [topic, setTopic] = useState("");
+  const [preview, setPreview] = useState(null); // { topic, lessons }
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function buildPreview() {
+    if (!hasApiKey) { onOpenSettings(); return; }
+    if (!topic.trim()) return;
+    setError("");
+    setLoading(true);
+    try {
+      const data = await generateSyllabus(topic.trim());
+      setPreview(data);
+    } catch (e) {
+      setError(e.message || "לא הצלחתי לבנות סילבוס. נסה שוב.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function approve() {
+    setLoading(true);
+    setError("");
+    try {
+      const syllabus = await createSyllabus(preview.topic, preview.lessons);
+      onSyllabusReady(syllabus);
+    } catch (e) {
+      setError(e.message || "לא הצלחתי לשמור את הסילבוס. נסה שוב.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (preview) {
+    return (
+      <div className="setup">
+        <h2>סילבוס: {preview.topic}</h2>
+        <p className="subtitle">{preview.lessons.length} שיעורים מתוכננים — כל שיעור יתוכנן במלואו רק כשתתחיל אותו</p>
+
+        <div className="syllabus-lessons">
+          {preview.lessons.map((l, i) => (
+            <div className="syllabus-lesson-row" key={i}>
+              <div className="syllabus-lesson-title">{i + 1}. {l.title}</div>
+              {l.summary && <div className="syllabus-lesson-summary">{l.summary}</div>}
+            </div>
+          ))}
+        </div>
+
+        {error && <p className="setup-error">{error}</p>}
+
+        <div className="plan-actions">
+          <button className="btn btn-primary" onClick={approve} disabled={loading}>
+            {loading ? "שומר..." : "אשר סילבוס והתחל"}
+          </button>
+          <button className="btn btn-ghost" onClick={buildPreview} disabled={loading}>ייצר מחדש</button>
+          <button className="btn btn-ghost" onClick={() => setPreview(null)} disabled={loading}>ביטול</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="setup">
+      <h2>סילבוס חדש</h2>
+      <p className="subtitle">נושא רחב שמתחלק לכמה שיעורים</p>
+
+      <p>איזה נושא רחב תרצה ללמד?</p>
+      <input
+        placeholder="למשל: מלחמת העולם השנייה, יסודות הפייתון, האימפרסיוניזם..."
+        value={topic}
+        onChange={(e) => setTopic(e.target.value)}
+      />
+
+      {error && <p className="setup-error">{error}</p>}
+
+      <button className="btn btn-primary" disabled={!hasApiKey || loading} onClick={buildPreview}>
+        {loading ? "בונה סילבוס..." : "הצע סילבוס"}
+      </button>
+    </div>
+  );
+}

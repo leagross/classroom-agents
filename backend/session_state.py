@@ -54,6 +54,11 @@ class Session:
     # activity always leads with the teacher actually teaching, never with
     # student chatter or a checkpoint question jumped straight to.
     activity_teacher_explained: bool = False
+    # Set only when this session was started from a syllabus lesson (see
+    # syllabus.py) — lets lesson_plan.advance_after_checkpoint report the
+    # lesson "completed" back on the syllabus once its plan is exhausted.
+    syllabus_id: str | None = None
+    syllabus_lesson_index: int | None = None
 
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]
@@ -100,13 +105,21 @@ def resolve_pool(topic: str, pool_keys: list | None = None) -> list:
 
 
 def create_session(
-    topic: str, pool_keys: list | None = None, user_email: str | None = None, plan: dict | None = None
+    topic: str,
+    pool_keys: list | None = None,
+    user_email: str | None = None,
+    plan: dict | None = None,
+    syllabus_id: str | None = None,
+    syllabus_lesson_index: int | None = None,
 ) -> Session:
     pool = resolve_pool(topic, pool_keys)
     # A lesson with a plan starts "mid-activity" (not yet waiting on the
     # student) so the classroom can open on its own, like a teacher who
     # walks in and starts teaching instead of standing there silently.
-    session = Session(id=str(uuid.uuid4()), topic=topic, pool=pool, plan=plan, awaiting_user=not plan)
+    session = Session(
+        id=str(uuid.uuid4()), topic=topic, pool=pool, plan=plan, awaiting_user=not plan,
+        syllabus_id=syllabus_id, syllabus_lesson_index=syllabus_lesson_index,
+    )
     SESSIONS[session.id] = session
     db.insert_lesson(
         session.id, session.topic,
@@ -115,6 +128,8 @@ def create_session(
         user_email=user_email,
         plan=plan,
         awaiting_user=session.awaiting_user,
+        syllabus_id=syllabus_id,
+        syllabus_lesson_index=syllabus_lesson_index,
     )
     return session
 
@@ -142,6 +157,8 @@ def get_session(session_id: str) -> Session:
         activity_index=lesson.get("activity_index", 0),
         autonomous_turns_used=lesson.get("autonomous_turns_used", 0),
         awaiting_user=lesson.get("awaiting_user", True),
+        syllabus_id=lesson.get("syllabus_id"),
+        syllabus_lesson_index=lesson.get("syllabus_lesson_index"),
     )
     for row in db.load_messages(session_id):
         session.history.append(

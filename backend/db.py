@@ -77,6 +77,18 @@ _SCHEMA_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS syllabi (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL,
+        lessons TEXT NOT NULL,
+        user_email TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_syllabi_user_email ON syllabi(user_email)",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS syllabus_id TEXT",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS syllabus_lesson_index INTEGER",
 ]
 
 
@@ -100,20 +112,27 @@ def insert_lesson(
     user_email: str | None = None,
     plan: dict | None = None,
     awaiting_user: bool = True,
+    syllabus_id: str | None = None,
+    syllabus_lesson_index: int | None = None,
 ):
     if not _engine:
         return
     with _engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO lessons (id, topic, pool_keys, next_jester_round, user_email, plan, awaiting_user) "
-                "VALUES (:id, :topic, :pool_keys, :njr, :user_email, :plan, :awaiting_user)"
+                "INSERT INTO lessons "
+                "(id, topic, pool_keys, next_jester_round, user_email, plan, awaiting_user, "
+                "syllabus_id, syllabus_lesson_index) "
+                "VALUES (:id, :topic, :pool_keys, :njr, :user_email, :plan, :awaiting_user, "
+                ":syllabus_id, :syllabus_lesson_index)"
             ),
             {
                 "id": lesson_id, "topic": topic, "pool_keys": pool_keys,
                 "njr": next_jester_round, "user_email": user_email,
                 "plan": json.dumps(plan) if plan else None,
                 "awaiting_user": awaiting_user,
+                "syllabus_id": syllabus_id,
+                "syllabus_lesson_index": syllabus_lesson_index,
             },
         )
 
@@ -189,7 +208,8 @@ def load_lesson(lesson_id: str):
         row = conn.execute(
             text(
                 "SELECT topic, pool_keys, round_count, pool_turn_index, next_jester_round, "
-                "plan, activity_index, autonomous_turns_used, awaiting_user "
+                "plan, activity_index, autonomous_turns_used, awaiting_user, "
+                "syllabus_id, syllabus_lesson_index "
                 "FROM lessons WHERE id = :id"
             ),
             {"id": lesson_id},
@@ -303,3 +323,69 @@ def load_messages(lesson_id: str):
             {"id": lesson_id},
         ).mappings().all()
         return [dict(r) for r in rows]
+
+
+def insert_syllabus(syllabus_id: str, topic: str, lessons: list, user_email: str | None = None):
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO syllabi (id, topic, lessons, user_email) "
+                "VALUES (:id, :topic, :lessons, :user_email)"
+            ),
+            {
+                "id": syllabus_id, "topic": topic,
+                "lessons": json.dumps(lessons, ensure_ascii=False),
+                "user_email": user_email,
+            },
+        )
+
+
+def update_syllabus_lessons(syllabus_id: str, lessons: list):
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(
+            text("UPDATE syllabi SET lessons = :lessons WHERE id = :id"),
+            {"lessons": json.dumps(lessons, ensure_ascii=False), "id": syllabus_id},
+        )
+
+
+def load_syllabus(syllabus_id: str):
+    if not _engine:
+        return None
+    with _engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT id, topic, lessons, user_email FROM syllabi WHERE id = :id"),
+            {"id": syllabus_id},
+        ).mappings().first()
+        if not row:
+            return None
+        syllabus = dict(row)
+        syllabus["lessons"] = json.loads(syllabus["lessons"])
+        return syllabus
+
+
+def list_syllabi_for_user(user_email: str, limit: int = 20):
+    if not _engine:
+        return []
+    with _engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, topic, lessons, created_at
+                FROM syllabi
+                WHERE user_email = :user_email
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"user_email": user_email, "limit": limit},
+        ).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["lessons"] = json.loads(d["lessons"])
+            out.append(d)
+        return out
