@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getMe, getMyLessons } from "../lib/api/auth";
+import { deleteSession } from "../lib/api/session";
 import "./Sidebar.css";
 
 const RECENT_LESSONS_STORAGE = "classroom_recent_lessons";
@@ -21,6 +22,11 @@ export function saveRecentLesson(id, topic, poolNames) {
   localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
 }
 
+export function removeRecentLesson(id) {
+  const list = getRecentLessons().filter((l) => l.id !== id);
+  localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
+}
+
 export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, refreshKey }) {
   const [serverLessons, setServerLessons] = useState([]);
   const [localLessons, setLocalLessons] = useState([]);
@@ -31,6 +37,20 @@ export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, 
       if (me) getMyLessons().then(setServerLessons);
     });
   }, [refreshKey, activeSessionId]);
+
+  async function handleDeleteServer(id) {
+    if (!confirm("למחוק את השיעור הזה מההיסטוריה?")) return;
+    await deleteSession(id);
+    setServerLessons((prev) => prev.filter((l) => l.id !== id));
+    if (id === activeSessionId) onNewLesson();
+  }
+
+  function handleDeleteLocal(id) {
+    if (!confirm("למחוק את השיעור הזה מההיסטוריה?")) return;
+    removeRecentLesson(id);
+    setLocalLessons(getRecentLessons());
+    if (id === activeSessionId) onNewLesson();
+  }
 
   const empty = serverLessons.length === 0 && localLessons.length === 0;
 
@@ -55,6 +75,7 @@ export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, 
                 meta={new Date(l.created_at).toLocaleDateString("he-IL")}
                 active={l.id === activeSessionId}
                 onClick={onSelectLesson}
+                onDelete={handleDeleteServer}
               />
             ))}
           </>
@@ -71,6 +92,7 @@ export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, 
                 meta={(l.poolNames || []).join(", ")}
                 active={l.id === activeSessionId}
                 onClick={onSelectLesson}
+                onDelete={handleDeleteLocal}
               />
             ))}
           </>
@@ -82,9 +104,14 @@ export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, 
   );
 }
 
-function LessonItem({ id, topic, meta, active, onClick }) {
+function LessonItem({ id, topic, meta, active, onClick, onDelete }) {
   return (
     <div className={"sidebar-lesson" + (active ? " active" : "")} onClick={() => onClick(id)}>
+      <button
+        className="lesson-delete-btn"
+        title="מחק מההיסטוריה"
+        onClick={(e) => { e.stopPropagation(); onDelete(id); }}
+      >🗑</button>
       <div className="lesson-topic">{topic}</div>
       <div className="lesson-meta">{meta}</div>
     </div>

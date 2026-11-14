@@ -182,6 +182,15 @@ def get_session(session_id: str):
     }
 
 
+@app.delete("/api/session/{session_id}")
+def delete_session(session_id: str):
+    """Removes a lesson from history (sidebar/dashboard) — in-memory cache
+    and the DB row (messages cascade-delete with it). Idempotent: deleting
+    an id that's already gone, or was never persisted, is not an error."""
+    session_state.delete_session(session_id)
+    return {"ok": True}
+
+
 @app.post("/api/syllabus")
 def create_syllabus_preview(req: SyllabusRequest, x_anthropic_key: str | None = Header(default=None)):
     """Preview-only, same spirit as POST /api/lesson-plan: breaks a broad

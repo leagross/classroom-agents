@@ -27,3 +27,7 @@ export async function getSession(id) {
   if (!res.ok) throw new Error("session not found");
   return res.json();
 }
+
+export async function deleteSession(id) {
+  await fetch(API_BASE + "/api/session/" + id, { method: "DELETE" });
+}

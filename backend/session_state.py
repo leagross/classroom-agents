@@ -171,3 +171,8 @@ def get_session(session_id: str) -> Session:
 def remember(session: Session, msg: ChatMessage):
     session.history.append(msg)
     db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
+
+
+def delete_session(session_id: str):
+    SESSIONS.pop(session_id, None)
+    db.delete_lesson(session_id)

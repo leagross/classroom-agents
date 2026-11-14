@@ -150,6 +150,14 @@ def update_lesson_state(lesson_id: str, round_count: int, pool_turn_index: int, 
         )
 
 
+def delete_lesson(lesson_id: str):
+    """Messages cascade-delete via the FK (ON DELETE CASCADE) on messages.lesson_id."""
+    if not _engine:
+        return
+    with _engine.begin() as conn:
+        conn.execute(text("DELETE FROM lessons WHERE id = :id"), {"id": lesson_id})
+
+
 def update_lesson_plan_state(lesson_id: str, activity_index: int, autonomous_turns_used: int, awaiting_user: bool):
     if not _engine:
         return
