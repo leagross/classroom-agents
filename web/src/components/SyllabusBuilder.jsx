@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { generateSyllabus, createSyllabus } from "../lib/api/syllabus";
+import usePreviewFlow from "../hooks/usePreviewFlow";
 import "./SetupForm.css";
 import "./SyllabusList.css";
 
@@ -12,36 +13,17 @@ import "./SyllabusList.css";
  */
 export default function SyllabusBuilder({ hasApiKey, onOpenSettings, onSyllabusReady }) {
   const [topic, setTopic] = useState("");
-  const [preview, setPreview] = useState(null); // { topic, lessons }
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { preview, loading, error, run, cancel, submit } = usePreviewFlow((t) => generateSyllabus(t));
 
   async function buildPreview() {
     if (!hasApiKey) { onOpenSettings(); return; }
     if (!topic.trim()) return;
-    setError("");
-    setLoading(true);
-    try {
-      const data = await generateSyllabus(topic.trim());
-      setPreview(data);
-    } catch (e) {
-      setError(e.message || "לא הצלחתי לבנות סילבוס. נסה שוב.");
-    } finally {
-      setLoading(false);
-    }
+    await run(topic.trim());
   }
 
   async function approve() {
-    setLoading(true);
-    setError("");
-    try {
-      const syllabus = await createSyllabus(preview.topic, preview.lessons);
-      onSyllabusReady(syllabus);
-    } catch (e) {
-      setError(e.message || "לא הצלחתי לשמור את הסילבוס. נסה שוב.");
-    } finally {
-      setLoading(false);
-    }
+    const syllabus = await submit(() => createSyllabus(preview.topic, preview.lessons));
+    if (syllabus) onSyllabusReady(syllabus);
   }
 
   if (preview) {
@@ -66,7 +48,7 @@ export default function SyllabusBuilder({ hasApiKey, onOpenSettings, onSyllabusR
             {loading ? "שומר..." : "אשר סילבוס והתחל"}
           </button>
           <button className="btn btn-ghost" onClick={buildPreview} disabled={loading}>ייצר מחדש</button>
-          <button className="btn btn-ghost" onClick={() => setPreview(null)} disabled={loading}>ביטול</button>
+          <button className="btn btn-ghost" onClick={cancel} disabled={loading}>ביטול</button>
         </div>
       </div>
     );

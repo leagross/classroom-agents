@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAgents } from "../lib/api/session";
 import { generateLessonPlan } from "../lib/api/lessonPlan";
+import usePreviewFlow from "../hooks/usePreviewFlow";
 import LessonPlanPreview from "./LessonPlanPreview";
 import "./SetupForm.css";
 
@@ -9,9 +10,12 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
   const [topic, setTopic] = useState("");
   const [selected, setSelected] = useState([]);
   const [sessionType, setSessionType] = useState("lesson"); // "lesson" | "review"
-  const [preview, setPreview] = useState(null); // { plan, poolKeys }
-  const [loadingPlan, setLoadingPlan] = useState(false);
-  const [error, setError] = useState("");
+  const { preview, loading: loadingPlan, error, run: buildPreview, cancel } = usePreviewFlow(
+    async (topicText, poolKeysArg) => {
+      const { plan, pool: resolvedPool } = await generateLessonPlan(topicText, poolKeysArg);
+      return { plan, poolKeys: resolvedPool.map((a) => a.key) };
+    }
+  );
 
   useEffect(() => {
     getAgents().then((data) => setPool(data.pool));
@@ -38,21 +42,7 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
       return;
     }
 
-    await buildPreview();
-  }
-
-  async function buildPreview() {
-    setError("");
-    setLoadingPlan(true);
-    try {
-      const poolKeysArg = selected.length === 2 ? selected : null;
-      const { plan, pool: resolvedPool } = await generateLessonPlan(topic.trim(), poolKeysArg);
-      setPreview({ plan, poolKeys: resolvedPool.map((a) => a.key) });
-    } catch (e) {
-      setError(e.message || "לא הצלחתי לבנות מערך שיעור. נסה שוב.");
-    } finally {
-      setLoadingPlan(false);
-    }
+    await buildPreview(topic.trim(), selected.length === 2 ? selected : null);
   }
 
   if (preview) {
@@ -62,8 +52,8 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
         plan={preview.plan}
         regenerating={loadingPlan}
         onStart={() => onStart(topic.trim(), preview.poolKeys, preview.plan)}
-        onRegenerate={buildPreview}
-        onCancel={() => setPreview(null)}
+        onRegenerate={() => buildPreview(topic.trim(), selected.length === 2 ? selected : null)}
+        onCancel={cancel}
       />
     );
   }

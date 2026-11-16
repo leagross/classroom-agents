@@ -6,7 +6,7 @@ import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
 import useLessonBoard from "../hooks/useLessonBoard";
-import { downloadLessonSummary } from "../lib/lessonSummary";
+import { downloadLessonSummary } from "../lib/export/markdown";
 import LessonBoard from "./board/LessonBoard";
 import ClassroomStage from "./ClassroomStage";
 import QuizModal from "./QuizModal";

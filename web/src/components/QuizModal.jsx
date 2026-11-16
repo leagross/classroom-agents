@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchQuiz } from "../lib/api/chat";
 import renderMath from "../hooks/useMathRender";
+import Modal from "./Modal";
 import "./QuizModal.css";
 
 export default function QuizModal({ open, sessionId, onClose, onQuestionsLoaded }) {
@@ -28,17 +29,12 @@ export default function QuizModal({ open, sessionId, onClose, onQuestionsLoaded 
     if (questions && bodyRef.current) renderMath(bodyRef.current);
   }, [questions]);
 
-  if (!open) return null;
-
   const score = questions
     ? questions.reduce((acc, q, i) => acc + (answers[i] === q.correct_index ? 1 : 0), 0)
     : 0;
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal quiz-modal">
-        <button className="modal-close" onClick={onClose}>✕</button>
-        <h3>בוחן על השיעור</h3>
+    <Modal open={open} onClose={onClose} className="quiz-modal" title="בוחן על השיעור">
         <div className="quiz-body" ref={bodyRef}>
           {error && <p className="quiz-error">{error}</p>}
           {!error && !questions && <p>בונה בוחן על השיעור...</p>}
@@ -72,7 +68,6 @@ export default function QuizModal({ open, sessionId, onClose, onQuestionsLoaded 
           )}
           {graded && <div className="quiz-score">הציון שלך: {score} מתוך {questions.length}</div>}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

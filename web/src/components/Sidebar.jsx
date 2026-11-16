@@ -2,30 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getMe, getMyLessons } from "../lib/api/auth";
 import { deleteSession } from "../lib/api/session";
+import { getRecentLessons, removeRecentLesson } from "../lib/recentLessons";
 import "./Sidebar.css";
-
-const RECENT_LESSONS_STORAGE = "classroom_recent_lessons";
-const RECENT_LESSONS_MAX = 15;
-
-export function getRecentLessons() {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_LESSONS_STORAGE) || "[]");
-  } catch (e) {
-    return [];
-  }
-}
-
-export function saveRecentLesson(id, topic, poolNames) {
-  let list = getRecentLessons().filter((l) => l.id !== id);
-  list.unshift({ id, topic, poolNames, ts: Date.now() });
-  list = list.slice(0, RECENT_LESSONS_MAX);
-  localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
-}
-
-export function removeRecentLesson(id) {
-  const list = getRecentLessons().filter((l) => l.id !== id);
-  localStorage.setItem(RECENT_LESSONS_STORAGE, JSON.stringify(list));
-}
 
 export default function Sidebar({ activeSessionId, onNewLesson, onSelectLesson, refreshKey }) {
   const [serverLessons, setServerLessons] = useState([]);

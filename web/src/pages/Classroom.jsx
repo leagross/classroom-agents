@@ -1,5 +1,5 @@
 import { useState } from "react";
-import Sidebar, { saveRecentLesson } from "../components/Sidebar";
+import Sidebar from "../components/Sidebar";
 import SetupForm from "../components/SetupForm";
 import SyllabusBuilder from "../components/SyllabusBuilder";
 import SyllabusView from "../components/SyllabusView";
@@ -10,19 +10,9 @@ import AuthArea from "../components/AuthArea";
 import { createSession, getSession } from "../lib/api/session";
 import { getSyllabus } from "../lib/api/syllabus";
 import { getStoredApiKey } from "../lib/api/apiKey";
+import { saveRecentLesson } from "../lib/recentLessons";
+import { sessionFromServer } from "../lib/session/shape";
 import "./Classroom.css";
-
-function sessionFromServerData(data) {
-  const poolNames = data.pool.map((a) => a.name);
-  const history = (data.history || []).map((m) => ({
-    agent: m.agent, key: m.key, color: m.color, text: m.text, isUser: m.is_user,
-  }));
-  return {
-    id: data.session_id, topic: data.topic, poolNames, history,
-    plan: data.plan, activityIndex: data.activity_index || 0, awaitingUser: data.awaiting_user,
-    syllabusId: data.syllabus_id || null,
-  };
-}
 
 export default function Classroom() {
   const [session, setSession] = useState(null); // { id, topic, poolNames, history, syllabusId, ... }
@@ -40,12 +30,8 @@ export default function Classroom() {
   async function handleStart(topic, poolKeys, plan) {
     try {
       const data = await createSession(topic, poolKeys, plan);
-      const poolNames = data.pool.map((a) => a.name);
-      saveRecentLesson(data.session_id, data.topic, poolNames);
-      setSession({
-        id: data.session_id, topic: data.topic, poolNames, history: [],
-        plan: data.plan, activityIndex: 0, awaitingUser: data.awaiting_user, syllabusId: null,
-      });
+      saveRecentLesson(data.session_id, data.topic, data.pool.map((a) => a.name));
+      setSession(sessionFromServer(data));
       bumpSidebar();
     } catch (e) {
       alert(e.message || "בחר בדיוק 2 תלמידים, או אל תבחר כלל (בחירה אוטומטית).");
@@ -56,7 +42,7 @@ export default function Classroom() {
     try {
       const data = await getSession(id);
       saveRecentLesson(data.session_id, data.topic, data.pool.map((a) => a.name));
-      setSession(sessionFromServerData(data));
+      setSession(sessionFromServer(data));
       setSyllabus(null);
       bumpSidebar();
     } catch (e) {
@@ -67,7 +53,7 @@ export default function Classroom() {
   /** Used by SyllabusView both for starting a fresh lesson and resuming one. */
   function handleSyllabusSessionStart(data) {
     saveRecentLesson(data.session_id, data.topic, data.pool.map((a) => a.name));
-    setSession(sessionFromServerData(data));
+    setSession(sessionFromServer(data));
     setSyllabus(null);
     bumpSidebar();
   }

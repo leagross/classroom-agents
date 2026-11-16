@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getDashboard } from "../lib/api/dashboard";
+import Modal from "./Modal";
 import "./DashboardModal.css";
 
 export default function DashboardModal({ open, onClose }) {
@@ -15,14 +16,8 @@ export default function DashboardModal({ open, onClose }) {
     });
   }, [open]);
 
-  if (!open) return null;
-
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal dashboard-modal">
-        <button className="modal-close" onClick={onClose}>✕</button>
-        <h3>ההתקדמות שלי</h3>
-
+    <Modal open={open} onClose={onClose} className="dashboard-modal" title="ההתקדמות שלי">
         {loading && <p>טוען...</p>}
         {!loading && !data && <p>התחבר עם Google כדי לראות את ההתקדמות שלך.</p>}
 
@@ -75,7 +70,6 @@ export default function DashboardModal({ open, onClose }) {
             )}
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

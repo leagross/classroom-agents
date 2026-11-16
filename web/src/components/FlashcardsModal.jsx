@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchFlashcards } from "../lib/api/chat";
 import renderMath from "../hooks/useMathRender";
+import Modal from "./Modal";
 import "./FlashcardsModal.css";
 
 export default function FlashcardsModal({ open, sessionId, onClose, onCardsLoaded }) {
@@ -28,8 +29,6 @@ export default function FlashcardsModal({ open, sessionId, onClose, onCardsLoade
     if (cards && cardRef.current) renderMath(cardRef.current);
   }, [cards, index, flipped]);
 
-  if (!open) return null;
-
   const card = cards?.[index];
 
   function next() {
@@ -43,11 +42,7 @@ export default function FlashcardsModal({ open, sessionId, onClose, onCardsLoade
   }
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal flashcards-modal">
-        <button className="modal-close" onClick={onClose}>✕</button>
-        <h3>כרטיסיות לחזרה</h3>
-
+    <Modal open={open} onClose={onClose} className="flashcards-modal" title="כרטיסיות לחזרה">
         {error && <p className="setup-error">{error}</p>}
         {!error && !cards && <p>בונה כרטיסיות על השיעור...</p>}
 
@@ -64,7 +59,6 @@ export default function FlashcardsModal({ open, sessionId, onClose, onCardsLoade
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

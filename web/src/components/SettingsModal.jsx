@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getStoredApiKey, setStoredApiKey, clearStoredApiKey } from "../lib/api/apiKey";
+import Modal from "./Modal";
 
 export default function SettingsModal({ open, onClose, onKeyChange }) {
   const [input, setInput] = useState(getStoredApiKey());
@@ -7,8 +8,6 @@ export default function SettingsModal({ open, onClose, onKeyChange }) {
   useEffect(() => {
     if (open) setInput(getStoredApiKey());
   }, [open]);
-
-  if (!open) return null;
 
   function save() {
     const val = input.trim();
@@ -26,10 +25,7 @@ export default function SettingsModal({ open, onClose, onKeyChange }) {
   const hasKey = !!getStoredApiKey();
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal settings-modal">
-        <button className="modal-close" onClick={onClose}>✕</button>
-        <h3>מפתח API אישי</h3>
+    <Modal open={open} onClose={onClose} className="settings-modal" title="מפתח API אישי">
         <p>
           כדי להשתמש בשירות, כל משתמש מזין את מפתח ה-Anthropic (Claude) <b>שלו עצמו</b>.
           השרת <b>לא שומר</b> שום מפתח — הוא נשמר רק בדפדפן שלך (localStorage) ונשלח לשרת רק
@@ -44,7 +40,6 @@ export default function SettingsModal({ open, onClose, onKeyChange }) {
         <span className={"key-status " + (hasKey ? "set" : "unset")}>
           {hasKey ? "✓ מפתח מוגדר. אפשר להתחיל שיעור." : "נדרש מפתח כדי להתחיל שיעור."}
         </span>
-      </div>
-    </div>
+    </Modal>
   );
 }
