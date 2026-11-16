@@ -1,0 +1,64 @@
+/* Two columns that trade places. The DOM order never changes — only the
+   column widths — so switching focus animates smoothly and never remounts
+   the chat (which would lose scroll position) or the board (which would
+   lose a half-written line). */
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  background: var(--bg-1, var(--surface-2));
+  transition: grid-template-columns .32s cubic-bezier(.4, 0, .2, 1);
+}
+
+/* Conversation is the main surface; the board sits beside it. */
+.stage[data-focus="chat"] { grid-template-columns: minmax(0, 1fr) clamp(300px, 30%, 420px); }
+
+/* The board takes the centre; the conversation narrows to a side column. */
+.stage[data-focus="board"] { grid-template-columns: clamp(260px, 26%, 340px) minmax(0, 1fr); }
+
+.stage.no-board { grid-template-columns: minmax(0, 1fr); padding: 0; gap: 0; }
+
+.stage-chat,
+.stage-board {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-chat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.stage.no-board .stage-chat { background: transparent; border: none; border-radius: 0; }
+
+/* Narrowed-down conversation: smaller bubbles, so a sentence still fits on
+   a line or two instead of becoming a tall thin ribbon of text. */
+.stage[data-focus="board"] .stage-chat .msg { font-size: 13.5px; padding: 9px 12px; max-width: 92%; }
+.stage[data-focus="board"] .stage-chat .msg-name { font-size: 11px; }
+.stage[data-focus="board"] .stage-chat .chat-messages { padding: 12px; gap: 10px; }
+.stage[data-focus="board"] .stage-chat .input-bar { padding: 10px; gap: 6px; }
+.stage[data-focus="board"] .stage-chat .input-bar button { width: 34px; height: 34px; font-size: 14px; }
+.stage[data-focus="board"] .stage-chat .input-bar .message-input { font-size: 14px; padding: 9px 12px; }
+/* Read-aloud is the least-used control, and the narrow column has room for
+   four buttons but not five alongside a usable text field. */
+.stage[data-focus="board"] .stage-chat .input-bar .tts-btn { display: none; }
+
+/* Stacked on a narrow screen: the board on top, as it would be at the
+   front of a room, with the conversation below it. */
+@media (max-width: 900px) {
+  .stage,
+  .stage[data-focus="chat"],
+  .stage[data-focus="board"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    padding: 10px;
+  }
+  .stage-board { order: -1; height: clamp(200px, 34vh, 300px); }
+  .stage[data-focus="board"] .stage-board { height: clamp(300px, 56vh, 520px); }
+}

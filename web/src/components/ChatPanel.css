@@ -92,6 +92,10 @@
 }
 .input-bar .message-input {
   flex: 1;
+  /* Without this an <input> refuses to shrink below its intrinsic width, so
+     in the narrow (board-centred) column the send button gets pushed out of
+     the panel entirely. */
+  min-width: 0;
   padding: 13px 18px;
   font-size: 16px;
   border: 1.5px solid var(--border);

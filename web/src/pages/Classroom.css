@@ -37,8 +37,20 @@
 }
 .classroom-content > * {
   width: 100%;
-  max-width: 760px;
   background: var(--surface);
+}
+
+/* A form or an outline is unreadable stretched across a wide screen, so
+   those stay in a narrow column. The live classroom does not: it holds the
+   conversation and the board side by side, and capping it at a single
+   column's width is what used to squeeze the board into a sliver. */
+.classroom-content > .entry-screen,
+.classroom-content > .syllabus-view {
+  max-width: 760px;
+}
+.classroom-content > .chat-panel {
+  max-width: 1600px;
+  background: transparent;
 }
 
 .entry-screen { display: flex; flex-direction: column; overflow-y: auto; }

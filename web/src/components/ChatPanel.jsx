@@ -5,12 +5,27 @@ import useTextToSpeech from "../hooks/useTextToSpeech";
 import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
-import BoardPaginator from "../lib/board/BoardPaginator";
+import useLessonBoard from "../hooks/useLessonBoard";
 import { downloadLessonSummary } from "../lib/lessonSummary";
-import LessonBoard from "./LessonBoard";
+import LessonBoard from "./board/LessonBoard";
+import ClassroomStage from "./ClassroomStage";
 import QuizModal from "./QuizModal";
 import FlashcardsModal from "./FlashcardsModal";
 import "./ChatPanel.css";
+import "./ClassroomStage.css";
+
+/** What the board shows about what the teacher is doing right now — the
+ *  backend sends its explicit mode with every done event. */
+const MODE_LABELS = {
+  teaching: "המורה מלמד",
+  demonstrating: "הכיתה מדברת",
+  asking_checkpoint: "שאלת בדיקה",
+  awaiting_answer: "ממתין לתשובתך",
+  answering_question: "המורה עונה לשאלה",
+  reteaching: "המורה מסביר שוב",
+  transitioning: "מעבר לשלב הבא",
+  completed: "השיעור הושלם",
+};
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -37,17 +52,17 @@ export default function ChatPanel({
   const [pendingImage, setPendingImage] = useState(null);
   const [streaming, setStreaming] = useState(null); // {name, color, text}
   const [waiting, setWaiting] = useState(false);
-  const [boardPages, setBoardPages] = useState([""]);
-  const [boardPageIndex, setBoardPageIndex] = useState(0);
   const [quizOpen, setQuizOpen] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState(null);
   const [flashcardsOpen, setFlashcardsOpen] = useState(false);
   const [flashcards, setFlashcards] = useState(null);
+  // Which surface is centred: the conversation, or the board/presentation.
+  const [focus, setFocus] = useState("chat");
+  const [teacherMode, setTeacherMode] = useState(null);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
-  const boardRef = useRef(null);
-  if (!boardRef.current) boardRef.current = new BoardPaginator();
+  const board = useLessonBoard({ sessionId });
   const tts = useTextToSpeech();
 
   const { activityIndex, preempt, handleDone } = useLessonAutoplay({
@@ -56,10 +71,10 @@ export default function ChatPanel({
 
   useEffect(() => {
     setMessages(initialHistory || []);
-    setBoardPages(boardRef.current.reset());
-    setBoardPageIndex(0);
     setQuizQuestions(null);
     setFlashcards(null);
+    setFocus("chat");
+    setTeacherMode(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -96,12 +111,12 @@ export default function ChatPanel({
         tts.speak(accumulated);
       } else if (evt.type === "board") {
         // Short key-point notes the teacher explicitly wrote — never the
-        // full explanation text above. See backend teacher.split_board_notes.
-        const pages = boardRef.current.append(evt.text);
-        setBoardPages(pages);
-        setBoardPageIndex(pages.length - 1);
+        // full explanation text above. The backend only emits these while
+        // the teacher is actually teaching or re-teaching.
+        board.write(evt.text);
       } else if (evt.type === "done") {
         doneEvent = evt;
+        if (evt.teacher_mode) setTeacherMode(evt.teacher_mode);
       } else if (evt.type === "error") {
         setStreaming(null);
         if (evt.detail && evt.detail.includes("מפתח")) onApiKeyError(evt.detail);
@@ -164,8 +179,26 @@ export default function ChatPanel({
   const currentActivity = plan?.activities?.[activityIndex];
 
   function handleExportSummary() {
-    downloadLessonSummary({ topic, poolNames, plan, boardPages, quizQuestions, flashcards });
+    downloadLessonSummary({ topic, poolNames, plan, boardPages: board.pagesText(), quizQuestions, flashcards });
   }
+
+  // A slide for the current activity, once presentations exist (stage 2.7).
+  const slide = currentActivity?.slide || null;
+
+  const boardPanel = plan ? (
+    <LessonBoard
+      pages={board.pages}
+      pageIndex={board.pageIndex}
+      writing={board.writing}
+      onPrev={board.prev}
+      onNext={board.next}
+      onSkipAnimation={board.skipAnimation}
+      focused={focus === "board"}
+      onToggleFocus={() => setFocus((f) => (f === "board" ? "chat" : "board"))}
+      slide={slide}
+      statusLabel={teacherMode ? MODE_LABELS[teacherMode] : null}
+    />
+  ) : null;
 
   return (
     <div className="chat-panel">
@@ -180,15 +213,7 @@ export default function ChatPanel({
         <button className="quiz-btn" onClick={() => setQuizOpen(true)}>📝 בוחן על השיעור</button>
       </div>
 
-      {plan && (
-        <LessonBoard
-          pages={boardPages}
-          pageIndex={boardPageIndex}
-          onPrev={() => setBoardPageIndex((i) => Math.max(0, i - 1))}
-          onNext={() => setBoardPageIndex((i) => Math.min(boardPages.length - 1, i + 1))}
-        />
-      )}
-
+      <ClassroomStage focus={focus} board={boardPanel}>
       <div className="chat-messages" ref={chatRef}>
         {messages.map((m, i) => (
           <div className={"msg-row" + (m.isUser ? " user" : "")} key={i}>
@@ -253,6 +278,7 @@ export default function ChatPanel({
           onClick={tts.toggle}
         >{tts.enabled ? "🔊" : "🔇"}</button>
       </div>
+      </ClassroomStage>
 
       <QuizModal
         open={quizOpen}
