@@ -46,6 +46,26 @@
 }
 .board-focus-btn:hover { background: rgba(255, 255, 255, 0.14); }
 
+/* Handwriting vs. slides — only shown once a deck exists for the activity. */
+.board-view-switch {
+  display: flex;
+  border: 1px solid rgba(244, 233, 216, 0.35);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.board-view-switch button {
+  border: none;
+  background: transparent;
+  color: #f4e9d8;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.board-view-switch button.active { background: rgba(255, 255, 255, 0.22); }
+.board-view-switch button:hover:not(.active) { background: rgba(255, 255, 255, 0.1); }
+
 .board-surface {
   flex: 1;
   min-height: 0;

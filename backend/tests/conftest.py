@@ -82,10 +82,20 @@ def fake_anthropic(monkeypatch):
     def install(script):
         client = FakeClient(script)
         state["client"] = client
-        for module_name in ("agent_calls", "domain.teacher_actions"):
-            module = sys.modules.get(module_name)
-            if module is not None:
-                monkeypatch.setattr(module, "get_client", lambda api_key=None: client, raising=False)
+        # Modules do `from agent_calls import get_client`, so each holds its
+        # own reference. Patch every module that has one rather than listing
+        # them by name — a list silently misses any module added later, and
+        # the test then fails on a missing API key instead of the behaviour
+        # it meant to check.
+        import agent_calls
+
+        original = agent_calls.get_client
+        stub = lambda api_key=None: client  # noqa: E731
+        for module in list(sys.modules.values()):
+            if module is None:
+                continue
+            if getattr(module, "get_client", None) is original:
+                monkeypatch.setattr(module, "get_client", stub, raising=False)
         return client
 
     install.state = state

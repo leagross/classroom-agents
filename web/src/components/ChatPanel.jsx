@@ -7,6 +7,7 @@ import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
 import useLessonBoard from "../hooks/useLessonBoard";
 import useClassroomStream from "../hooks/useClassroomStream";
+import useLessonSlides from "../hooks/useLessonSlides";
 import { downloadLessonSummary } from "../lib/export/markdown";
 import LessonBoard from "./board/LessonBoard";
 import ClassroomStage from "./ClassroomStage";
@@ -60,6 +61,7 @@ export default function ChatPanel({
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
   const board = useLessonBoard({ sessionId });
+  const [boardView, setBoardView] = useState("notes");
   const tts = useTextToSpeech();
 
   const { messages, streaming, waiting, teacherMode, reset, sent, run: runStream } = useClassroomStream({
@@ -141,12 +143,18 @@ export default function ChatPanel({
 
   const currentActivity = plan?.activities?.[activityIndex];
 
+  // Slides accompany the activity being taught. Built lazily per activity,
+  // and only for a plan-driven lesson — a free-form review session has no
+  // activities to build a deck around.
+  const slides = useLessonSlides({
+    sessionId,
+    activityIndex: currentActivity ? activityIndex : null,
+    enabled: Boolean(plan),
+  });
+
   function handleExportSummary() {
     downloadLessonSummary({ topic, poolNames, plan, boardPages: board.pagesText(), quizQuestions, flashcards });
   }
-
-  // A slide for the current activity, once presentations exist (stage 2.7).
-  const slide = currentActivity?.slide || null;
 
   const boardPanel = plan ? (
     <LessonBoard
@@ -158,8 +166,10 @@ export default function ChatPanel({
       onSkipAnimation={board.skipAnimation}
       focused={focus === "board"}
       onToggleFocus={() => setFocus((f) => (f === "board" ? "chat" : "board"))}
-      slide={slide}
       statusLabel={teacherMode ? MODE_LABELS[teacherMode] : null}
+      view={boardView}
+      onChangeView={setBoardView}
+      slides={slides}
     />
   ) : null;
 

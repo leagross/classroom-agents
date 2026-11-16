@@ -21,11 +21,16 @@ export default function LessonBoard({
   onSkipAnimation,
   focused,
   onToggleFocus,
-  slide,
   statusLabel,
+  // Slides are optional: a lesson is perfectly usable without them.
+  view = "notes", // "notes" | "slides"
+  onChangeView,
+  slides,
 }) {
   const surfaceRef = useRef(null);
   const entries = pages[pageIndex] || [];
+  const showingSlides = view === "slides" && slides?.hasSlides;
+  const slide = showingSlides ? slides.slide : null;
 
   // Formulas are written in LaTeX, so they have to be typeset — but only
   // once nothing is mid-animation. A half-written formula is unbalanced
@@ -34,7 +39,7 @@ export default function LessonBoard({
   const isAnimating = Boolean(writing);
   useEffect(() => {
     if (!isAnimating && surfaceRef.current) renderMath(surfaceRef.current);
-  }, [entries, isAnimating, pageIndex]);
+  }, [entries, isAnimating, pageIndex, slide]);
 
   const pageCount = pages.length;
 
@@ -44,6 +49,22 @@ export default function LessonBoard({
         <span className="board-title">הלוח</span>
         {statusLabel && <span className="board-status">{statusLabel}</span>}
         <div className="board-top-actions">
+          {slides?.hasSlides && (
+            <div className="board-view-switch" role="group" aria-label="תצוגת הלוח">
+              <button
+                className={view === "notes" ? "active" : ""}
+                onClick={() => onChangeView?.("notes")}
+              >
+                כתב יד
+              </button>
+              <button
+                className={view === "slides" ? "active" : ""}
+                onClick={() => onChangeView?.("slides")}
+              >
+                מצגת
+              </button>
+            </div>
+          )}
           <button
             className="board-focus-btn"
             onClick={onToggleFocus}
@@ -57,8 +78,10 @@ export default function LessonBoard({
       <div className="board-surface" ref={surfaceRef} onClick={onSkipAnimation}>
         {slide ? (
           <div className="board-slide">
-            {slide.imageUrl ? (
-              <img src={slide.imageUrl} alt={slide.title || "שקופית"} />
+            {/* image_url appears only once a design provider is wired up
+                (see backend/slides.py); until then the text is the slide. */}
+            {slide.image_url ? (
+              <img src={slide.image_url} alt={slide.title || "שקופית"} />
             ) : (
               <div className="board-slide-text">
                 {slide.title && <h3>{slide.title}</h3>}
@@ -87,13 +110,31 @@ export default function LessonBoard({
       </div>
 
       <footer className="board-pager">
-        <button onClick={onPrev} disabled={pageIndex === 0} title="דף קודם">‹</button>
-        <span>
-          דף {pageIndex + 1} מתוך {pageCount}
-        </span>
-        <button onClick={onNext} disabled={pageIndex >= pageCount - 1} title="דף הבא">
-          ›
-        </button>
+        {showingSlides ? (
+          <>
+            <button onClick={slides.prev} disabled={slides.slideIndex === 0} title="שקופית קודמת">‹</button>
+            <span>
+              שקופית {slides.slideIndex + 1} מתוך {slides.count}
+            </span>
+            <button
+              onClick={slides.next}
+              disabled={slides.slideIndex >= slides.count - 1}
+              title="שקופית הבאה"
+            >
+              ›
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={onPrev} disabled={pageIndex === 0} title="דף קודם">‹</button>
+            <span>
+              דף {pageIndex + 1} מתוך {pageCount}
+            </span>
+            <button onClick={onNext} disabled={pageIndex >= pageCount - 1} title="דף הבא">
+              ›
+            </button>
+          </>
+        )}
       </footer>
     </section>
   );

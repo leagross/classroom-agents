@@ -22,6 +22,7 @@ import lesson_plan
 import orchestrator
 import quiz
 import session_state
+import slides
 import slack_bot
 import syllabus
 from agent_calls import TEACHER_REPLAY_DELAY, MissingApiKeyError, word_chunks
@@ -418,6 +419,34 @@ def continue_lesson_stream(session_id: str, x_anthropic_key: str | None = Header
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/session/{session_id}/slides/{activity_index}")
+def get_activity_slides(
+    session_id: str, activity_index: int, x_anthropic_key: str | None = Header(default=None)
+):
+    """The slides that accompany one activity, built on first request and
+    then cached on the session. Deliberately per-activity and lazy: a
+    five-activity lesson the student leaves after the first one should not
+    have paid for five decks up front."""
+    try:
+        session = session_state.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    activities = session.lesson.activities
+    if not (0 <= activity_index < len(activities)):
+        raise HTTPException(status_code=404, detail="activity index out of range")
+
+    if activity_index in session.slides_by_activity:
+        return {"slides": session.slides_by_activity[activity_index], "cached": True}
+
+    try:
+        built = slides.build_slides(session.topic, activities[activity_index], api_key=x_anthropic_key)
+    except slides.SlideGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    session.slides_by_activity[activity_index] = built
+    return {"slides": built, "cached": False}
 
 
 @app.post("/api/session/{session_id}/quiz")

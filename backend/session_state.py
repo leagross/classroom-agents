@@ -51,6 +51,11 @@ class Session:
     # Set only when this session was started from a syllabus lesson.
     syllabus_id: str | None = None
     syllabus_lesson_index: int | None = None
+    # Slides already built for this lesson, keyed by activity index. Built
+    # lazily (one activity at a time) and kept in memory only: regenerating
+    # them after a restart costs one model call, while a DB column for them
+    # would have to be migrated and kept in step with the plan.
+    slides_by_activity: dict = field(default_factory=dict)
 
     def transcript_text(self):
         lines = [f"נושא השיעור: {self.topic}"]
