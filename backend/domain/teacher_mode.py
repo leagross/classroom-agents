@@ -44,7 +44,7 @@ class InvalidTransitionError(Exception):
 
 _RESUMABLE = {
     TeacherMode.TEACHING, TeacherMode.DEMONSTRATING, TeacherMode.ASKING_CHECKPOINT,
-    TeacherMode.AWAITING_ANSWER, TeacherMode.RETEACHING, TeacherMode.COMPLETED,
+    TeacherMode.AWAITING_ANSWER, TeacherMode.RETEACHING, TeacherMode.TRANSITIONING, TeacherMode.COMPLETED,
 }
 
 ALLOWED_TRANSITIONS: dict[TeacherMode, set[TeacherMode]] = {
@@ -53,7 +53,7 @@ ALLOWED_TRANSITIONS: dict[TeacherMode, set[TeacherMode]] = {
     TeacherMode.ASKING_CHECKPOINT: {TeacherMode.AWAITING_ANSWER, TeacherMode.ANSWERING_QUESTION},
     TeacherMode.AWAITING_ANSWER: {TeacherMode.TRANSITIONING, TeacherMode.RETEACHING, TeacherMode.ANSWERING_QUESTION},
     TeacherMode.RETEACHING: {TeacherMode.DEMONSTRATING, TeacherMode.ASKING_CHECKPOINT, TeacherMode.ANSWERING_QUESTION},
-    TeacherMode.TRANSITIONING: {TeacherMode.TEACHING, TeacherMode.COMPLETED},
+    TeacherMode.TRANSITIONING: {TeacherMode.TEACHING, TeacherMode.COMPLETED, TeacherMode.ANSWERING_QUESTION},
     TeacherMode.COMPLETED: {TeacherMode.ANSWERING_QUESTION},
     # ANSWERING_QUESTION can return to wherever it interrupted.
     TeacherMode.ANSWERING_QUESTION: _RESUMABLE | {TeacherMode.ANSWERING_QUESTION},
