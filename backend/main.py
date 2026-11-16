@@ -4,10 +4,12 @@ import json
 import os
 import secrets
 
+import time
+
 import anthropic
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -22,8 +24,9 @@ import quiz
 import session_state
 import slack_bot
 import syllabus
-from agent_calls import MissingApiKeyError
+from agent_calls import TEACHER_REPLAY_DELAY, MissingApiKeyError, word_chunks
 from agents import POOL, TEACHER
+from services.session_repository import lesson_from_row
 
 WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")
 
@@ -66,6 +69,40 @@ class CreateSyllabusRequest(BaseModel):
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB decoded
+
+API_KEY_MISSING_DETAIL = "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."
+API_KEY_INVALID_DETAIL = "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."
+
+
+@app.exception_handler(MissingApiKeyError)
+def _missing_api_key_handler(request: Request, exc: MissingApiKeyError):
+    """One place that turns a missing/invalid key into an HTTP error, instead
+    of the same try/except pair repeated in six route bodies."""
+    return JSONResponse(status_code=401, content={"detail": API_KEY_MISSING_DETAIL})
+
+
+@app.exception_handler(anthropic.AuthenticationError)
+def _invalid_api_key_handler(request: Request, exc: anthropic.AuthenticationError):
+    return JSONResponse(status_code=401, content={"detail": API_KEY_INVALID_DETAIL})
+
+
+def _sse(events):
+    """Adapter from the orchestrator's event generator to the SSE wire
+    format. Pacing lives here, not in the pipeline: a 'start' event marked
+    replay=True is already-generated text (the verified teacher), so it's
+    delivered word by word to read like live typing. Non-streaming callers
+    of the same pipeline pay none of this."""
+    paced = False
+    for event in events:
+        if event.get("type") == "start":
+            paced = bool(event.get("replay"))
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        elif event.get("type") == "token" and paced:
+            for chunk in word_chunks(event["text"]):
+                yield f"data: {json.dumps({'type': 'token', 'text': chunk}, ensure_ascii=False)}\n\n"
+                time.sleep(TEACHER_REPLAY_DELAY)
+        else:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 class ImageAttachment(BaseModel):
@@ -110,16 +147,6 @@ def create_lesson_plan(req: LessonPlanRequest, x_anthropic_key: str | None = Hea
 
     try:
         plan = lesson_plan.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key)
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
     except lesson_plan.LessonPlanGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"plan": plan, "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in pool]}
@@ -146,8 +173,8 @@ def create_session(req: CreateSessionRequest, request: Request):
         "session_id": session.id,
         "topic": session.topic,
         "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in session.pool],
-        "plan": session.plan,
-        "awaiting_user": session.awaiting_user,
+        "plan": session.lesson.plan,
+        "awaiting_user": session.lesson.autoplay_paused,
     }
 
 
@@ -175,9 +202,10 @@ def get_session(session_id: str):
             }
             for m in session.history
         ],
-        "plan": session.plan,
-        "activity_index": session.activity_index,
-        "awaiting_user": session.awaiting_user,
+        "plan": session.lesson.plan,
+        "activity_index": session.lesson.activity_index,
+        "awaiting_user": session.lesson.autoplay_paused,
+        "teacher_mode": session.lesson.mode.value,
         "syllabus_id": session.syllabus_id,
     }
 
@@ -199,16 +227,6 @@ def create_syllabus_preview(req: SyllabusRequest, x_anthropic_key: str | None = 
     own full plan is generated separately, lazily, only once started."""
     try:
         lessons = syllabus.generate_syllabus(req.topic, api_key=x_anthropic_key)
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
     except syllabus.SyllabusGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"topic": req.topic, "lessons": lessons}
@@ -258,16 +276,6 @@ def create_syllabus_lesson_plan(
     try:
         pool = session_state.resolve_pool(combined_topic, None)
         plan = lesson_plan.generate_lesson_plan(combined_topic, pool, api_key=x_anthropic_key)
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
     except lesson_plan.LessonPlanGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
@@ -285,17 +293,17 @@ def list_lessons(request: Request):
     return {"lessons": db.list_lessons_for_user(user["email"])}
 
 
-def _lesson_status(lesson: dict) -> str:
+def _lesson_status(row: dict) -> str:
     """A "review" lesson has no defined end, so it's never in_progress/
-    completed in the dashboard's sense — just its own thing. A plan-driven
-    lesson is completed once it's paused (awaiting_user) past its last
-    activity, in_progress otherwise."""
-    if not lesson.get("plan"):
+    completed in the dashboard's sense — just its own thing.
+
+    This used to be a fourth independent re-derivation of "where is this
+    lesson", with its own boolean comparison. It now rebuilds the actual
+    Lesson state machine from the row and asks it, so the dashboard can't
+    disagree with the classroom about whether a lesson is finished."""
+    if not row.get("plan"):
         return "review"
-    total_activities = len(lesson["plan"].get("activities", []))
-    if lesson.get("awaiting_user") and lesson.get("activity_index", 0) >= total_activities:
-        return "completed"
-    return "in_progress"
+    return "completed" if lesson_from_row(row).is_complete() else "in_progress"
 
 
 @app.get("/api/dashboard")
@@ -347,20 +355,15 @@ def send_message(req: MessageRequest, x_anthropic_key: str | None = Header(defau
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
+    # Same pipeline as the SSE route below, just drained to a list — so a
+    # plan-driven lesson advances identically on both, which was the bug
+    # this rewrite set out to remove.
     try:
         replies = orchestrator.handle_user_message(
             session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
         )
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     return {
         "replies": [
             {"agent": m.display_name, "key": m.agent_key, "color": m.color, "text": m.content}
@@ -378,7 +381,7 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
     Errors (missing/invalid key, etc.) are delivered as an SSE event with
     type "error" rather than an HTTP error status — by the time this starts
     streaming, the 200 response has already begun, so the status code can't
-    change anymore. See orchestrator.handle_user_message_stream for why.
+    change anymore. See orchestrator._guarded for why.
 
     The image attachment is validated eagerly (type/size), before the stream
     starts, since that check doesn't depend on the model and can still
@@ -389,15 +392,11 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
-    def event_source():
-        stream = orchestrator.handle_user_message_stream(
-            session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
-        )
-        for event in stream:
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
+    events = orchestrator.user_message_events(
+        session, req.text, api_key=x_anthropic_key, image=_image_dict(req.image)
+    )
     return StreamingResponse(
-        event_source(),
+        _sse(events),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -407,18 +406,15 @@ def send_message_stream(req: MessageRequest, x_anthropic_key: str | None = Heade
 def continue_lesson_stream(session_id: str, x_anthropic_key: str | None = Header(default=None)):
     """SSE, same event shape as /api/message/stream, but with no new user
     text — produces exactly one autonomous 'beat' of a plan-driven lesson.
-    See orchestrator.advance_lesson_stream for the state machine."""
+    See orchestrator.autonomous_beat_events, which dispatches on the
+    lesson's TeacherMode."""
     try:
         session = session_state.get_session(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
-    def event_source():
-        for event in lesson_plan.advance_lesson_stream(session, api_key=x_anthropic_key):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
     return StreamingResponse(
-        event_source(),
+        _sse(orchestrator.autonomous_beat_events(session, api_key=x_anthropic_key)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -436,16 +432,6 @@ def create_quiz(session_id: str, x_anthropic_key: str | None = Header(default=No
 
     try:
         questions = quiz.generate_quiz(session, api_key=x_anthropic_key)
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
     except quiz.QuizGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"questions": questions}
@@ -463,16 +449,6 @@ def create_flashcards(session_id: str, x_anthropic_key: str | None = Header(defa
 
     try:
         cards = flashcards.generate_flashcards(session, api_key=x_anthropic_key)
-    except MissingApiKeyError:
-        raise HTTPException(
-            status_code=401,
-            detail="לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑).",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=401,
-            detail="מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב.",
-        )
     except flashcards.FlashcardsGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"cards": cards}

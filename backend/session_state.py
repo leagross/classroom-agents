@@ -1,9 +1,12 @@
-"""Lesson/session state: what a session looks like in memory, how it's
-created, and how it's rehydrated from the DB after a restart.
+"""Session: who is in the room, what was said, and (via Session.lesson) where
+the lesson is.
 
-Nothing here talks to the Anthropic API — that's agent_calls.py, teacher.py,
-quiz.py and lesson_plan.py. This file only owns the session's shape and
-lifecycle, so any of those can change independently of it.
+What changed in the rewrite: the six loose plan fields that used to live
+here (plan, activity_index, autonomous_turns_used, awaiting_user,
+homework_delivered, activity_teacher_explained) are gone. They are now one
+Lesson object (domain/lesson.py) that owns its own state machine, so no
+other module reads or flips those flags directly. Persistence goes through
+SessionRepository, not inline db.update_* calls.
 """
 
 import random
@@ -12,12 +15,16 @@ from dataclasses import dataclass, field
 
 import db
 from agents import AGENTS_BY_KEY, CONNECTOR, DEEP_DIVER, POOL, SIMPLIFIER, STUDENT_DANI
+from domain.lesson import Lesson
+from services.session_repository import SessionRepository, lesson_from_row
 
 JESTER_EVERY_MIN = 3
 JESTER_EVERY_MAX = 4
 HISTORY_WINDOW = 20
 
 db.init_db()
+
+repository = SessionRepository()
 
 
 @dataclass
@@ -37,26 +44,11 @@ class Session:
     round_count: int = 0
     next_jester_round: int = field(default_factory=lambda: random.randint(JESTER_EVERY_MIN, JESTER_EVERY_MAX))
     pool_turn_index: int = 0
-    # Lesson plan (optional — only set for a "new lesson", never for "review"
-    # sessions, which behave exactly as before this feature existed).
-    plan: dict | None = None
-    activity_index: int = 0
-    autonomous_turns_used: int = 0
-    awaiting_user: bool = True
-    # In-memory only (not persisted): guards against re-delivering the
-    # homework message if this process restarts right at the lesson's last
-    # checkpoint and the student's answer is somehow replayed — an edge
-    # case not worth a DB column for.
-    homework_delivered: bool = False
-    # Also in-memory only: whether the teacher has already explained the
-    # CURRENT activity's material. Reset to False every time activity_index
-    # advances (see lesson_plan.advance_after_checkpoint) — a plan-driven
-    # activity always leads with the teacher actually teaching, never with
-    # student chatter or a checkpoint question jumped straight to.
-    activity_teacher_explained: bool = False
-    # Set only when this session was started from a syllabus lesson (see
-    # syllabus.py) — lets lesson_plan.advance_after_checkpoint report the
-    # lesson "completed" back on the syllabus once its plan is exhausted.
+    # The lesson's state machine. A "review" session gets a plan-less Lesson,
+    # which reports is_complete() and sits in COMPLETED — so the orchestrator
+    # needs no special case for "this session has no plan".
+    lesson: Lesson = field(default_factory=Lesson)
+    # Set only when this session was started from a syllabus lesson.
     syllabus_id: str | None = None
     syllabus_lesson_index: int | None = None
 
@@ -113,11 +105,12 @@ def create_session(
     syllabus_lesson_index: int | None = None,
 ) -> Session:
     pool = resolve_pool(topic, pool_keys)
-    # A lesson with a plan starts "mid-activity" (not yet waiting on the
-    # student) so the classroom can open on its own, like a teacher who
-    # walks in and starts teaching instead of standing there silently.
+    # A lesson with a plan opens in TEACHING, so the classroom starts
+    # teaching on its own instead of standing there waiting for the student
+    # to speak first; a plan-less review session opens COMPLETED (nothing
+    # scripted to advance through) and just answers whatever comes.
     session = Session(
-        id=str(uuid.uuid4()), topic=topic, pool=pool, plan=plan, awaiting_user=not plan,
+        id=str(uuid.uuid4()), topic=topic, pool=pool, lesson=Lesson(plan=plan),
         syllabus_id=syllabus_id, syllabus_lesson_index=syllabus_lesson_index,
     )
     SESSIONS[session.id] = session
@@ -127,10 +120,11 @@ def create_session(
         session.next_jester_round,
         user_email=user_email,
         plan=plan,
-        awaiting_user=session.awaiting_user,
+        awaiting_user=session.lesson.autoplay_paused,
         syllabus_id=syllabus_id,
         syllabus_lesson_index=syllabus_lesson_index,
     )
+    repository.save(session)
     return session
 
 
@@ -140,29 +134,26 @@ def get_session(session_id: str) -> Session:
 
     # Not cached in this process (e.g. restarted, or a different Render instance) —
     # try to rehydrate it from the database before giving up.
-    lesson = db.load_lesson(session_id)
-    if not lesson:
+    row = repository.load_row(session_id)
+    if not row:
         raise KeyError("session not found")
 
-    pool_keys = lesson["pool_keys"].split(",")
+    pool_keys = row["pool_keys"].split(",")
     pool = [AGENTS_BY_KEY[k] for k in pool_keys if k in AGENTS_BY_KEY]
     session = Session(
         id=session_id,
-        topic=lesson["topic"],
+        topic=row["topic"],
         pool=pool,
-        round_count=lesson["round_count"],
-        pool_turn_index=lesson["pool_turn_index"],
-        next_jester_round=lesson["next_jester_round"],
-        plan=lesson.get("plan"),
-        activity_index=lesson.get("activity_index", 0),
-        autonomous_turns_used=lesson.get("autonomous_turns_used", 0),
-        awaiting_user=lesson.get("awaiting_user", True),
-        syllabus_id=lesson.get("syllabus_id"),
-        syllabus_lesson_index=lesson.get("syllabus_lesson_index"),
+        round_count=row["round_count"],
+        pool_turn_index=row["pool_turn_index"],
+        next_jester_round=row["next_jester_round"],
+        lesson=lesson_from_row(row),
+        syllabus_id=row.get("syllabus_id"),
+        syllabus_lesson_index=row.get("syllabus_lesson_index"),
     )
-    for row in db.load_messages(session_id):
+    for msg_row in repository.load_messages(session_id):
         session.history.append(
-            ChatMessage(row["agent_key"], row["display_name"], row["color"], row["content"])
+            ChatMessage(msg_row["agent_key"], msg_row["display_name"], msg_row["color"], msg_row["content"])
         )
     SESSIONS[session_id] = session
     return session
@@ -170,7 +161,7 @@ def get_session(session_id: str) -> Session:
 
 def remember(session: Session, msg: ChatMessage):
     session.history.append(msg)
-    db.insert_message(session.id, msg.agent_key, msg.display_name, msg.color, msg.content)
+    repository.add_message(session.id, msg)
 
 
 def delete_session(session_id: str):

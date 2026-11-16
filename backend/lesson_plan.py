@@ -1,32 +1,18 @@
-"""Everything specific to a plan-driven lesson: generating the plan itself
-(goals + activities, approved/regenerated before any session exists), and
-advancing a session through it one autonomous "beat" at a time.
+"""Generating a lesson plan: goals + 5 staged activities + homework,
+produced as a preview the user approves or regenerates before any session
+exists.
 
-A "review" session never touches this module — session.plan is just None
-and the rest of the app (orchestrator.py) behaves exactly as it did before
-this feature existed.
+Advancing a lesson through that plan is NOT here any more — that state
+machine lives in domain/lesson.py and is driven by
+orchestrator.autonomous_beat_events.
 """
 
 import json
 import os
-import time
 
-import anthropic
-
-import db
-from agent_calls import (
-    MODEL,
-    MissingApiKeyError,
-    TEACHER_REPLAY_DELAY,
-    call_agent_stream,
-    get_client,
-    word_chunks,
-)
-import syllabus
-from agents import LESSON_PLAN_SYSTEM_PROMPT, TEACHER
+from agent_calls import MODEL, get_client
+from agents import LESSON_PLAN_SYSTEM_PROMPT
 from json_utils import extract_json
-from session_state import ChatMessage, Session, remember
-from teacher import get_validated_teacher_explanation
 
 LESSON_PLAN_MODEL = os.environ.get("CLASSROOM_LESSON_PLAN_MODEL", MODEL)
 # Hebrew text tokenizes far less efficiently than English, and a 3-5 activity
@@ -89,148 +75,3 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
             print(f"[generate_lesson_plan] malformed plan JSON, retrying: {e}; raw={raw[:300]!r}")
 
     raise LessonPlanGenerationError(f"לא הצלחתי לבנות מערך שיעור תקין: {last_error}")
-
-
-def advance_lesson_stream(session: Session, api_key: str | None = None):
-    """Generator (same SSE event shape as orchestrator.handle_user_message_stream)
-    that produces exactly ONE autonomous 'beat' of a plan-driven lesson,
-    without any new user message: the teacher explaining the activity's
-    material (always first — never skipped), a pool-agent reaction (the
-    classroom talking amongst itself, only once the teacher has actually
-    taught this activity), or, once the autonomous budget is spent, the
-    teacher's pre-written checkpoint question — at which point the lesson
-    pauses and waits for the real student again.
-
-    The frontend calls this in a loop (with a short delay between calls, for
-    pacing) while the previous call's "done" event says continue=true.
-    """
-    try:
-        if not session.plan:
-            yield {"type": "done", "continue": False, "awaiting_user": True}
-            return
-
-        activities = session.plan.get("activities", [])
-        if session.activity_index >= len(activities):
-            session.awaiting_user = True
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
-            yield {"type": "done", "continue": False, "awaiting_user": True}
-            return
-
-        activity = activities[session.activity_index]
-
-        if not session.activity_teacher_explained:
-            # The teacher always teaches the material first — no jumping
-            # straight to student chatter or a checkpoint question. What the
-            # teacher SAYS (speech) and what they WRITE on the board
-            # (board_notes — short key points, never the whole explanation)
-            # are two different things; only the latter goes to the board.
-            speech, board_notes = get_validated_teacher_explanation(session, activity, api_key=api_key)
-            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
-            for chunk in word_chunks(speech):
-                yield {"type": "token", "text": chunk}
-                time.sleep(TEACHER_REPLAY_DELAY)
-            yield {"type": "end"}
-            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, speech))
-            if board_notes:
-                yield {"type": "board", "text": board_notes}
-
-            session.activity_teacher_explained = True
-            yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}
-            return
-
-        budget = activity.get("autonomous_exchanges", DEFAULT_AUTONOMOUS_EXCHANGES)
-
-        if session.autonomous_turns_used < budget:
-            # The classroom talks amongst itself: the pool agent whose turn
-            # it is reacts to the activity and what's been said so far.
-            pool_agent = session.pool[session.pool_turn_index % len(session.pool)]
-            session.pool_turn_index += 1
-            transcript = session.transcript_text() + f"\n\n[פעילות נוכחית במערך השיעור: {activity['title']} — {activity.get('summary', '')}]"
-            yield {"type": "start", "key": pool_agent.key, "name": pool_agent.display_name, "color": pool_agent.color}
-            parts = []
-            for chunk in call_agent_stream(pool_agent, transcript, api_key=api_key):
-                parts.append(chunk)
-                yield {"type": "token", "text": chunk}
-            text = "".join(parts).strip() or "..."
-            yield {"type": "end"}
-            remember(session, ChatMessage(pool_agent.key, pool_agent.display_name, pool_agent.color, text))
-
-            session.autonomous_turns_used += 1
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, False)
-            yield {"type": "done", "continue": True, "awaiting_user": False, "activity_index": session.activity_index}
-        else:
-            # Budget spent — the teacher asks the activity's pre-written
-            # checkpoint question (no extra model call needed for this one;
-            # it was already written when the plan was generated) and the
-            # lesson pauses for the real student.
-            question = activity["checkpoint_question"]
-            yield {"type": "start", "key": TEACHER.key, "name": TEACHER.display_name, "color": TEACHER.color}
-            for chunk in word_chunks(question):
-                yield {"type": "token", "text": chunk}
-                time.sleep(TEACHER_REPLAY_DELAY)
-            yield {"type": "end"}
-            remember(session, ChatMessage(TEACHER.key, TEACHER.display_name, TEACHER.color, question))
-
-            session.awaiting_user = True
-            db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, True)
-            yield {"type": "done", "continue": False, "awaiting_user": True, "activity_index": session.activity_index}
-
-    except MissingApiKeyError:
-        yield {"type": "error", "detail": "לא סופק מפתח API. הזן את מפתח ה-Anthropic האישי שלך בהגדרות (🔑)."}
-    except anthropic.AuthenticationError:
-        yield {"type": "error", "detail": "מפתח ה-API שהזנת לא תקין. בדוק אותו בהגדרות ונסה שוב."}
-    except Exception as e:
-        print(f"[advance_lesson_stream] unexpected error: {e!r}")
-        yield {"type": "error", "detail": "משהו השתבש בצד השרת. נסה שוב."}
-
-
-def advance_after_checkpoint(session: Session) -> dict:
-    """Called once a real student has answered the current activity's
-    checkpoint question (i.e. after a normal user message in a plan-driven
-    lesson). Moves on to the next activity and returns the extra fields the
-    SSE "done" event should carry so the frontend knows whether to resume
-    advance_lesson_stream's loop. Returns {} for a plan-less ("review")
-    session — orchestrator.py doesn't need to know the difference.
-
-    If this move exhausts the plan (the "summary" activity was just
-    answered) and the plan has homework, the extra dict also carries
-    {"homework": "..."} exactly once — orchestrator.py is responsible for
-    turning that into an actual teacher message in the stream, since
-    rendering it isn't this module's job."""
-    if not session.plan:
-        return {}
-    activities = session.plan.get("activities", [])
-    session.activity_index += 1
-    session.autonomous_turns_used = 0
-    session.activity_teacher_explained = False
-    more_activities_left = session.activity_index < len(activities)
-    session.awaiting_user = not more_activities_left
-    db.update_lesson_plan_state(
-        session.id, session.activity_index, session.autonomous_turns_used, session.awaiting_user
-    )
-    extra = {
-        "continue": more_activities_left,
-        "awaiting_user": session.awaiting_user,
-        "activity_index": session.activity_index,
-    }
-    homework = session.plan.get("homework")
-    if not more_activities_left and homework and not session.homework_delivered:
-        session.homework_delivered = True
-        extra["homework"] = homework
-    if not more_activities_left and session.syllabus_id is not None:
-        syllabus.mark_lesson_completed(session.syllabus_id, session.syllabus_lesson_index)
-    return extra
-
-
-def retry_after_misunderstanding(session: Session) -> dict:
-    """Called instead of advance_after_checkpoint when the student's answer
-    to the checkpoint question showed they haven't understood the activity's
-    material yet. Stays on the SAME activity (activity_index unchanged) but
-    resets activity_teacher_explained, so the next autonomous beat re-teaches
-    it — ideally with a different example — before the checkpoint is asked
-    again, instead of plowing ahead to the next activity regardless."""
-    session.activity_teacher_explained = False
-    session.autonomous_turns_used = 0
-    session.awaiting_user = False
-    db.update_lesson_plan_state(session.id, session.activity_index, session.autonomous_turns_used, False)
-    return {"continue": True, "awaiting_user": False, "activity_index": session.activity_index}

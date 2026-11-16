@@ -1,0 +1,110 @@
+"""A fake Anthropic client, so the pipeline can be driven end to end without
+network access or an API key.
+
+The old code had no tests at all, and its stated verification plan was
+"curl both routes and compare" — which can't work against a live model,
+since no two runs produce the same text. Everything here is deterministic.
+"""
+
+import sys
+import types
+
+import pytest
+
+
+class FakeTextBlock:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeResponse:
+    def __init__(self, text):
+        self.content = [FakeTextBlock(text)]
+        self.stop_reason = "end_turn"
+        self.usage = None
+
+
+class FakeStream:
+    """Context manager matching anthropic's messages.stream() surface."""
+
+    def __init__(self, text):
+        self._text = text
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    @property
+    def text_stream(self):
+        yield self._text
+
+
+class FakeMessages:
+    def __init__(self, script):
+        self._script = script
+        self.calls = []
+
+    def _reply_for(self, system, messages):
+        self.calls.append({"system": system, "messages": messages})
+        prompt = str(messages)
+        for matcher, reply in self._script:
+            if matcher(system or "", prompt):
+                return reply(prompt) if callable(reply) else reply
+        return "תגובה כללית."
+
+    def create(self, model=None, max_tokens=None, system=None, messages=None, **kwargs):
+        return FakeResponse(self._reply_for(system, messages))
+
+    def stream(self, model=None, max_tokens=None, system=None, messages=None, **kwargs):
+        return FakeStream(self._reply_for(system, messages))
+
+
+class FakeClient:
+    def __init__(self, script):
+        self.messages = FakeMessages(script)
+
+
+def is_verifier(system: str, prompt: str) -> bool:
+    return "אימות" in system or "שכבת אימות" in system
+
+
+@pytest.fixture
+def fake_anthropic(monkeypatch):
+    """Patches get_client everywhere it's imported. Pass a script: a list of
+    (matcher, reply) pairs, where matcher(system, prompt) -> bool."""
+
+    state = {"client": None}
+
+    def install(script):
+        client = FakeClient(script)
+        state["client"] = client
+        for module_name in ("agent_calls", "domain.teacher_actions"):
+            module = sys.modules.get(module_name)
+            if module is not None:
+                monkeypatch.setattr(module, "get_client", lambda api_key=None: client, raising=False)
+        return client
+
+    install.state = state
+    return install
+
+
+@pytest.fixture(autouse=True)
+def no_db(monkeypatch):
+    """Keep every test in-memory: db.py no-ops without DATABASE_URL anyway,
+    but this makes it explicit and independent of the environment."""
+    import db
+
+    monkeypatch.setattr(db, "_engine", None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def clean_sessions():
+    import session_state
+
+    session_state.SESSIONS.clear()
+    yield
+    session_state.SESSIONS.clear()

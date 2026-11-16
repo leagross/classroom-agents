@@ -45,6 +45,16 @@ _SCHEMA_STATEMENTS = [
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS activity_index INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS autonomous_turns_used INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS awaiting_user BOOLEAN NOT NULL DEFAULT true",
+    # The teacher's explicit mode (domain/teacher_mode.py). Before this column
+    # existed, the mode had to be guessed from awaiting_user/activity_index,
+    # which cannot distinguish "about to teach" from "re-teaching after a
+    # misunderstanding" from "mid-chatter" — so a restart mid-activity
+    # re-taught material the student had already heard. NULL means a row
+    # written before this column existed; SessionRepository derives a safe
+    # mode for those (see _mode_from_legacy_row).
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS teacher_mode TEXT",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS resume_mode TEXT",
+    "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS homework_delivered BOOLEAN NOT NULL DEFAULT false",
     """
     CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -158,16 +168,32 @@ def delete_lesson(lesson_id: str):
         conn.execute(text("DELETE FROM lessons WHERE id = :id"), {"id": lesson_id})
 
 
-def update_lesson_plan_state(lesson_id: str, activity_index: int, autonomous_turns_used: int, awaiting_user: bool):
+def update_lesson_plan_state(
+    lesson_id: str,
+    activity_index: int,
+    autonomous_turns_used: int,
+    awaiting_user: bool,
+    teacher_mode: str | None = None,
+    resume_mode: str | None = None,
+    homework_delivered: bool = False,
+):
+    """awaiting_user is still written even though teacher_mode now subsumes
+    it, because it's read directly by main._lesson_status, the dashboard
+    counts, list_lessons_for_user and the frontend."""
     if not _engine:
         return
     with _engine.begin() as conn:
         conn.execute(
             text(
                 "UPDATE lessons SET activity_index = :ai, autonomous_turns_used = :atu, "
-                "awaiting_user = :au WHERE id = :id"
+                "awaiting_user = :au, teacher_mode = :tm, resume_mode = :rm, "
+                "homework_delivered = :hd WHERE id = :id"
             ),
-            {"ai": activity_index, "atu": autonomous_turns_used, "au": awaiting_user, "id": lesson_id},
+            {
+                "ai": activity_index, "atu": autonomous_turns_used, "au": awaiting_user,
+                "tm": teacher_mode, "rm": resume_mode, "hd": homework_delivered,
+                "id": lesson_id,
+            },
         )
 
 
@@ -220,6 +246,7 @@ def load_lesson(lesson_id: str):
             text(
                 "SELECT topic, pool_keys, round_count, pool_turn_index, next_jester_round, "
                 "plan, activity_index, autonomous_turns_used, awaiting_user, "
+                "teacher_mode, resume_mode, homework_delivered, "
                 "syllabus_id, syllabus_lesson_index "
                 "FROM lessons WHERE id = :id"
             ),
