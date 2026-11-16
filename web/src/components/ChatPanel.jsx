@@ -6,6 +6,7 @@ import useLessonAutoplay from "../hooks/useLessonAutoplay";
 import renderMath from "../hooks/useMathRender";
 import { stageLabel } from "../lib/lessonStages";
 import useLessonBoard from "../hooks/useLessonBoard";
+import useClassroomStream from "../hooks/useClassroomStream";
 import { downloadLessonSummary } from "../lib/export/markdown";
 import LessonBoard from "./board/LessonBoard";
 import ClassroomStage from "./ClassroomStage";
@@ -47,34 +48,35 @@ export default function ChatPanel({
   plan, initialActivityIndex, initialAwaitingUser,
   onHome, onApiKeyError,
 }) {
-  const [messages, setMessages] = useState(initialHistory || []);
   const [input, setInput] = useState("");
   const [pendingImage, setPendingImage] = useState(null);
-  const [streaming, setStreaming] = useState(null); // {name, color, text}
-  const [waiting, setWaiting] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState(null);
   const [flashcardsOpen, setFlashcardsOpen] = useState(false);
   const [flashcards, setFlashcards] = useState(null);
   // Which surface is centred: the conversation, or the board/presentation.
   const [focus, setFocus] = useState("chat");
-  const [teacherMode, setTeacherMode] = useState(null);
   const chatRef = useRef(null);
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
   const board = useLessonBoard({ sessionId });
   const tts = useTextToSpeech();
 
+  const { messages, streaming, waiting, teacherMode, reset, sent, run: runStream } = useClassroomStream({
+    onBoardNotes: board.write,
+    onSpoken: tts.speak,
+    onApiKeyError,
+  });
+
   const { activityIndex, preempt, handleDone } = useLessonAutoplay({
     sessionId, plan, initialActivityIndex, initialAwaitingUser, runStream,
   });
 
   useEffect(() => {
-    setMessages(initialHistory || []);
+    reset(initialHistory || []);
     setQuizQuestions(null);
     setFlashcards(null);
     setFocus("chat");
-    setTeacherMode(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -90,42 +92,6 @@ export default function ChatPanel({
     (transcript) => setInput((prev) => (prev ? prev + " " : "") + transcript),
     () => tts.cancel()
   );
-
-  /** Wires a streaming call's events to the chat UI, returns the final "done" event. */
-  async function runStream(callStreamFn) {
-    let accumulated = "";
-    let current = { name: "", color: "" };
-    let doneEvent = null;
-    await callStreamFn((evt) => {
-      setWaiting(false);
-      if (evt.type === "start") {
-        accumulated = "";
-        current = { name: evt.name, color: evt.color };
-        setStreaming({ name: evt.name, color: evt.color, text: "" });
-      } else if (evt.type === "token") {
-        accumulated += evt.text;
-        setStreaming((prev) => (prev ? { ...prev, text: accumulated } : prev));
-      } else if (evt.type === "end") {
-        setMessages((prev) => [...prev, { agent: current.name, key: "assistant", color: current.color, text: accumulated, isUser: false }]);
-        setStreaming(null);
-        tts.speak(accumulated);
-      } else if (evt.type === "board") {
-        // Short key-point notes the teacher explicitly wrote — never the
-        // full explanation text above. The backend only emits these while
-        // the teacher is actually teaching or re-teaching.
-        board.write(evt.text);
-      } else if (evt.type === "done") {
-        doneEvent = evt;
-        if (evt.teacher_mode) setTeacherMode(evt.teacher_mode);
-      } else if (evt.type === "error") {
-        setStreaming(null);
-        if (evt.detail && evt.detail.includes("מפתח")) onApiKeyError(evt.detail);
-        else alert(evt.detail || "שגיאה.");
-        doneEvent = { type: "error" };
-      }
-    });
-    return doneEvent;
-  }
 
   function onFileChange(e) {
     const file = e.target.files[0];
@@ -154,24 +120,21 @@ export default function ChatPanel({
     // The user taking their turn always wins over a scheduled autonomous beat.
     const myToken = preempt();
 
-    const userMsg = {
+    sent({
       agent: "את/ה",
       key: "user",
       color: "#64748b",
       text: text || "(ללא טקסט)",
       isUser: true,
       imageDataUrl: pendingImage?.dataUrl || null,
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    });
     setInput("");
     const image = pendingImage ? { media_type: pendingImage.mediaType, data: pendingImage.base64 } : null;
     setPendingImage(null);
-    setWaiting(true);
 
     const doneEvent = await runStream((onEvent) =>
       sendMessageStream(sessionId, text || "(התלמיד צירף תמונה בלי טקסט נוסף)", image, onEvent)
     );
-    setWaiting(false);
 
     handleDone(doneEvent, myToken);
   }
