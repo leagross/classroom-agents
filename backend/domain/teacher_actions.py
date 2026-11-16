@@ -98,6 +98,23 @@ _BOARD_INSTRUCTION = (
     "רק הכותרות שתלמיד ירשום לעצמו."
 )
 
+#: The teaching contract, shared by every action that explains material.
+#: The default assumption is that the student has never met this before —
+#: not that they have the background and just need reminding. Only material
+#: that was actually covered earlier in THIS lesson may be treated as known,
+#: and then only as a one-line recap.
+_TEACHING_CONTRACT = (
+    "כללי הוראה שאתה מחויב להם:\n"
+    "- קודם מסבירים, ורק אחר כך מציגים. אסור להציג נוסחה, פונקציה, מושג או מונח מקצועי "
+    "לפני שהסברת במילים פשוטות מה הוא עושה ולמה הוא בכלל נחוץ. קודם הרעיון, אחר כך הסימון.\n"
+    "- הנח שהתלמיד לא מכיר את הנושא בכלל. אל תניח שום ידע קודם, גם לא ידע שנראה לך בסיסי "
+    "ומובן מאליו. כל מונח שאתה משתמש בו בפעם הראשונה — הסבר אותו באותו משפט.\n"
+    "- דבר שהוא חדש לתלמיד: הסבר בפירוט, לאט, עם דוגמה קונקרטית אחת לפחות.\n"
+    "- דבר שכבר נלמד קודם בשיעור הזה עצמו: די בתזכורת קצרה של משפט אחד, לא הסבר מלא מחדש.\n"
+    "- אל תשתמש במילים כמו \"כידוע\", \"פשוט\", \"ברור ש\", \"כמו שאתה יודע\" — אם זה היה ברור, "
+    "לא היה צורך ללמד את זה."
+)
+
 
 @dataclass
 class ExplainAction:
@@ -108,9 +125,9 @@ class ExplainAction:
         activity = lesson.current_activity or {}
         return session.transcript_text() + (
             f"\n\n[השלב הנוכחי במערך השיעור: {activity.get('title', '')} — {activity.get('summary', '')}. "
-            "זה הרגע שבו המורה צריך ללמד בפועל את החומר של השלב הזה לתלמיד שעדיין לא מכיר אותו. "
-            "אל תזרוק את כל החומר במשפט אחד ואל תניח שהתלמיד כבר מכיר את הרקע: תתחיל בהסבר "
-            "הדרגתי ופשוט, ותביא לפחות דוגמה קונקרטית אחת לפני שאתה ממשיך הלאה.\n"
+            "זה הרגע שבו המורה מלמד בפועל את החומר של השלב הזה, לתלמיד שפוגש אותו עכשיו "
+            "בפעם הראשונה. אל תזרוק את כל החומר במשפט אחד — בנה אותו צעד אחר צעד.\n"
+            f"{_TEACHING_CONTRACT}\n"
             f"{_BOARD_INSTRUCTION}]"
         )
 
@@ -124,16 +141,29 @@ class ExplainAction:
 
 @dataclass
 class ReteachAction:
-    """The teacher explaining the SAME activity again after the student's
-    checkpoint answer showed they hadn't understood — explicitly required to
-    come at it from a different angle than last time."""
+    """The teacher explaining the SAME activity again after the student
+    showed they hadn't understood.
+
+    The point is not to repeat the explanation more slowly. The teacher has
+    to work out, from what the student actually wrote, WHICH part did not
+    land — a term, a step, the reason the thing exists at all — and come at
+    that specific part from several different directions. Repeating the
+    same route that already failed is the one thing it must not do.
+    """
 
     def build_prompt(self, session, lesson) -> str:
         activity = lesson.current_activity or {}
         return session.transcript_text() + (
-            f"\n\n[התלמיד לא הבין את החומר של השלב הנוכחי ({activity.get('title', '')}) בהסבר הראשון. "
-            "הסבר אותו שוב מזווית אחרת לגמרי: דוגמה חדשה ושונה מזו שכבר הבאת, בקצב איטי יותר, "
-            "ובלי להניח שום דבר ממה שאמרת קודם. אל תחזור על אותן מילים.\n"
+            f"\n\n[התלמיד לא הבין את החומר של השלב הנוכחי ({activity.get('title', '')}).\n"
+            "לפני שאתה מסביר שוב, קרא שוב את מה שהתלמיד כתב למעלה וזהה מתוך דבריו מה בדיוק "
+            "לא ברור לו: מונח מסוים? שלב מסוים בתהליך? הקשר בין שני דברים? או בכלל למה זה נחוץ? "
+            "אם הוא רק כתב \"לא הבנתי\" בלי לפרט — הסק מהתשובה הקודמת שלו, או מהנקודה שבה הוא "
+            "נתקע, מה כנראה החסם.\n"
+            "אחר כך הסבר שוב — אבל רק את החלק שלא הובן, לא את הכול מחדש — וגש אליו מכמה כיוונים "
+            "שונים: אנלוגיה מחיי היום-יום, דוגמה מספרית/קונקרטית חדשה (לא זו שכבר השתמשת בה), "
+            "ופירוק לצעדים קטנים יותר. אל תחזור על אותן מילים ועל אותו מסלול שכבר לא עבד.\n"
+            "בסוף, שאל שאלה קצרה שבודקת בדיוק את הנקודה שלא הובנה.\n"
+            f"{_TEACHING_CONTRACT}\n"
             f"{_BOARD_INSTRUCTION}]"
         )
 
@@ -148,19 +178,32 @@ class ReteachAction:
 @dataclass
 class AnswerQuestionAction:
     """The teacher replying to whatever the student just said — a question
-    mid-lesson, or any message in a plan-less review session."""
+    mid-lesson, or any message in a plan-less review session.
+
+    "I didn't get it" is handled here too, not only at a checkpoint: the
+    student can say it at any point, and the same rule applies — work out
+    what specifically is unclear before explaining anything.
+    """
 
     image: dict | None = None
 
     def build_prompt(self, session, lesson) -> str:
+        confusion = (
+            "אם התלמיד אומר שהוא לא הבין — אל תחזור על ההסבר הקודם כלשונו. "
+            "זהה קודם מתוך דבריו מה בדיוק לא ברור (מונח? שלב? הקשר? מה המטרה בכלל?), "
+            "ואם לא פירט — הסק מהשיחה היכן הוא נתקע. אחר כך הסבר את אותה נקודה מכיוון אחר: "
+            "אנלוגיה, דוגמה קונקרטית חדשה, או פירוק לצעדים קטנים יותר.\n"
+        )
         if lesson.is_complete():
-            return session.transcript_text()
+            return session.transcript_text() + f"\n\n[{confusion}{_TEACHING_CONTRACT}]"
         activity = lesson.current_activity or {}
         return session.transcript_text() + (
             f"\n\n[אנחנו באמצע השלב \"{activity.get('title', '')}\" במערך השיעור. "
-            "התלמיד שאל שאלה שאינה תשובה לשאלת הבדיקה. ענה עליה בקצרה ובמיקוד, "
-            "ואם היא חורגת מהנושא הנוכחי — אמור זאת והצע לחזור אליה בשלב מתאים יותר, "
-            "במקום לסטות מהשיעור.]"
+            "התלמיד אמר משהו שאינו תשובה לשאלת הבדיקה. ענה בקצרה ובמיקוד, "
+            "ואם זה חורג מהנושא הנוכחי — אמור זאת והצע לחזור לזה בשלב מתאים יותר, "
+            "במקום לסטות מהשיעור.\n"
+            f"{confusion}"
+            f"{_TEACHING_CONTRACT}]"
         )
 
     def parse(self, raw: str) -> TeacherOutput:
@@ -182,8 +225,9 @@ class CheckpointFeedbackAction:
             f"\n\n[התלמיד הרגע ענה על שאלת הבדיקה של הפעילות הנוכחית במערך השיעור "
             f"({activity.get('title', '')}): \"{activity.get('checkpoint_question', '')}\". "
             "תן משוב קצר וממוקד על התשובה שלו: אם היא מראה הבנה אמיתית של החומר — חיזוק קצר "
-            "וממוקד, לא גנרי. אם היא מראה שהוא עדיין לא הבין — תקן בעדינות, והבא דוגמה נוספת "
-            "שונה מזו שכבר השתמשת בה, כדי להבהיר מזווית אחרת.\n"
+            "וממוקד, לא גנרי. אם היא מראה שהוא עדיין לא הבין — זהה קודם מתוך התשובה שלו מה "
+            "בדיוק חסר או שגוי אצלו, אמור זאת בעדינות, והבהר את אותה נקודה בדיוק מזווית אחרת, "
+            "עם דוגמה חדשה ושונה מזו שכבר השתמשת בה.\n"
             f"בסיום המשוב שלך, בשורה נפרדת משלה, כתוב בדיוק אחת מהשתיים: אם התשובה מראה הבנה "
             f"מספקת כדי להמשיך לפעילות הבאה, כתוב {UNDERSTOOD_MARKER}. אם לא, כתוב {RETEACH_MARKER}.]"
         )
