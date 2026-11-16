@@ -63,6 +63,11 @@ class Lesson:
         comparing activity_index to len(activities) itself."""
         return self.plan is None or self.current_activity is None
 
+    def is_done(self) -> bool:
+        """Uniform with every other phase sub-flow (domain/phases/), so
+        CourseFlow can treat the live lesson like any other phase."""
+        return self.is_complete()
+
     @property
     def expects_checkpoint_answer(self) -> bool:
         """True exactly when the student's next message should be treated as
