@@ -31,6 +31,7 @@ from typing import Protocol
 
 from agent_calls import call_agent, get_client
 from agents import TEACHER, VERIFIER_SYSTEM_PROMPT
+from domain.learner import PRESUMED_KNOWN, InvalidProfileError, LearnerProfile
 
 import os
 
@@ -98,22 +99,41 @@ _BOARD_INSTRUCTION = (
     "רק הכותרות שתלמיד ירשום לעצמו."
 )
 
-#: The teaching contract, shared by every action that explains material.
-#: The default assumption is that the student has never met this before —
-#: not that they have the background and just need reminding. Only material
-#: that was actually covered earlier in THIS lesson may be treated as known,
-#: and then only as a one-line recap.
-_TEACHING_CONTRACT = (
-    "כללי הוראה שאתה מחויב להם:\n"
-    "- קודם מסבירים, ורק אחר כך מציגים. אסור להציג נוסחה, פונקציה, מושג או מונח מקצועי "
-    "לפני שהסברת במילים פשוטות מה הוא עושה ולמה הוא בכלל נחוץ. קודם הרעיון, אחר כך הסימון.\n"
-    "- הנח שהתלמיד לא מכיר את הנושא בכלל. אל תניח שום ידע קודם, גם לא ידע שנראה לך בסיסי "
-    "ומובן מאליו. כל מונח שאתה משתמש בו בפעם הראשונה — הסבר אותו באותו משפט.\n"
-    "- דבר שהוא חדש לתלמיד: הסבר בפירוט, לאט, עם דוגמה קונקרטית אחת לפחות.\n"
-    "- דבר שכבר נלמד קודם בשיעור הזה עצמו: די בתזכורת קצרה של משפט אחד, לא הסבר מלא מחדש.\n"
-    "- אל תשתמש במילים כמו \"כידוע\", \"פשוט\", \"ברור ש\", \"כמו שאתה יודע\" — אם זה היה ברור, "
-    "לא היה צורך ללמד את זה."
-)
+def _teaching_contract(lesson) -> str:
+    """The teaching contract, shared by every action that explains material.
+
+    The rules that never change: explain before showing, explain every new
+    term when it first appears, and never use phrasing that presumes the
+    student already knows ("as you know"). What DOES depend on the student is
+    only what counts as already known — and that comes from their stage-1
+    profile, carried on the lesson's plan. With no profile (a free-form
+    review session, or a plan from before intake existed) the safe default is
+    the beginner's: assume nothing.
+    """
+    profile = None
+    learner = (lesson.plan or {}).get("learner") if lesson is not None else None
+    if learner:
+        try:
+            profile = LearnerProfile.from_dict(learner)
+        except InvalidProfileError:
+            # A stored profile that no longer validates must not stop the
+            # lesson from being taught — fall back to assuming nothing.
+            profile = None
+
+    known = profile.presumed_known() if profile else PRESUMED_KNOWN["beginner"]
+    depth = f"- {profile.depth_guidance()}\n" if profile else ""
+    return (
+        "כללי הוראה שאתה מחויב להם:\n"
+        "- קודם מסבירים, ורק אחר כך מציגים. אסור להציג נוסחה, פונקציה, מושג או מונח מקצועי "
+        "לפני שהסברת במילים פשוטות מה הוא עושה ולמה הוא בכלל נחוץ. קודם הרעיון, אחר כך הסימון.\n"
+        f"- {known}\n"
+        f"{depth}"
+        "- כל מונח שהתלמיד לא פגש עדיין — הסבר אותו באותו משפט שבו הוא מופיע לראשונה.\n"
+        "- דבר שהוא חדש לתלמיד: הסבר בפירוט, לאט, עם דוגמה קונקרטית אחת לפחות.\n"
+        "- דבר שכבר נלמד קודם בשיעור הזה עצמו: די בתזכורת קצרה של משפט אחד, לא הסבר מלא מחדש.\n"
+        "- אל תשתמש במילים כמו \"כידוע\", \"פשוט\", \"ברור ש\", \"כמו שאתה יודע\" — אם זה היה ברור, "
+        "לא היה צורך ללמד את זה."
+    )
 
 
 @dataclass
@@ -127,7 +147,7 @@ class ExplainAction:
             f"\n\n[השלב הנוכחי במערך השיעור: {activity.get('title', '')} — {activity.get('summary', '')}. "
             "זה הרגע שבו המורה מלמד בפועל את החומר של השלב הזה, לתלמיד שפוגש אותו עכשיו "
             "בפעם הראשונה. אל תזרוק את כל החומר במשפט אחד — בנה אותו צעד אחר צעד.\n"
-            f"{_TEACHING_CONTRACT}\n"
+            f"{_teaching_contract(lesson)}\n"
             f"{_BOARD_INSTRUCTION}]"
         )
 
@@ -163,7 +183,7 @@ class ReteachAction:
             "שונים: אנלוגיה מחיי היום-יום, דוגמה מספרית/קונקרטית חדשה (לא זו שכבר השתמשת בה), "
             "ופירוק לצעדים קטנים יותר. אל תחזור על אותן מילים ועל אותו מסלול שכבר לא עבד.\n"
             "בסוף, שאל שאלה קצרה שבודקת בדיוק את הנקודה שלא הובנה.\n"
-            f"{_TEACHING_CONTRACT}\n"
+            f"{_teaching_contract(lesson)}\n"
             f"{_BOARD_INSTRUCTION}]"
         )
 
@@ -195,7 +215,7 @@ class AnswerQuestionAction:
             "אנלוגיה, דוגמה קונקרטית חדשה, או פירוק לצעדים קטנים יותר.\n"
         )
         if lesson.is_complete():
-            return session.transcript_text() + f"\n\n[{confusion}{_TEACHING_CONTRACT}]"
+            return session.transcript_text() + f"\n\n[{confusion}{_teaching_contract(lesson)}]"
         activity = lesson.current_activity or {}
         return session.transcript_text() + (
             f"\n\n[אנחנו באמצע השלב \"{activity.get('title', '')}\" במערך השיעור. "
@@ -203,7 +223,7 @@ class AnswerQuestionAction:
             "ואם זה חורג מהנושא הנוכחי — אמור זאת והצע לחזור לזה בשלב מתאים יותר, "
             "במקום לסטות מהשיעור.\n"
             f"{confusion}"
-            f"{_TEACHING_CONTRACT}]"
+            f"{_teaching_contract(lesson)}]"
         )
 
     def parse(self, raw: str) -> TeacherOutput:

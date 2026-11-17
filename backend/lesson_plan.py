@@ -29,13 +29,15 @@ class LessonPlanGenerationError(Exception):
     pass
 
 
-def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> dict:
+def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None, profile=None) -> dict:
     """A lesson plan is generated once, as a preview the user can approve or
     regenerate, before any session/DB row exists — same spirit as
     generate_quiz, just earlier in the lifecycle and shaped as an object
     instead of an array."""
     pool_names = ", ".join(a.display_name for a in pool)
     user_content = f"נושא השיעור: {topic}\nהתלמידים שישתתפו: {pool_names}"
+    if profile is not None:
+        user_content += f"\n\nפרופיל התלמיד האנושי:\n{profile.describe()}"
     last_error = None
     for _ in range(LESSON_PLAN_MAX_RETRIES):
         response = get_client(api_key).messages.create(
@@ -75,6 +77,12 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
             # call per activity, so the safe default is to not spend it.
             if not isinstance(plan.get("presentation"), bool):
                 plan["presentation"] = False
+            # The plan carries who it was written for. It is already what is
+            # persisted with the session and handed back by the client, so
+            # the teacher can read the student's level from it at every turn
+            # with no extra column, request field or migration.
+            if profile is not None:
+                plan["learner"] = profile.to_dict()
             return plan
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
             last_error = e

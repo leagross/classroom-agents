@@ -97,6 +97,9 @@ _SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_syllabi_user_email ON syllabi(user_email)",
+    # The learner profile a syllabus was built for, so each lesson's plan —
+    # generated lazily, possibly days later — is written for the same student.
+    "ALTER TABLE syllabi ADD COLUMN IF NOT EXISTS profile TEXT",
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS syllabus_id TEXT",
     "ALTER TABLE lessons ADD COLUMN IF NOT EXISTS syllabus_lesson_index INTEGER",
 ]
@@ -363,19 +366,22 @@ def load_messages(lesson_id: str):
         return [dict(r) for r in rows]
 
 
-def insert_syllabus(syllabus_id: str, topic: str, lessons: list, user_email: str | None = None):
+def insert_syllabus(
+    syllabus_id: str, topic: str, lessons: list, user_email: str | None = None, profile: dict | None = None
+):
     if not _engine:
         return
     with _engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO syllabi (id, topic, lessons, user_email) "
-                "VALUES (:id, :topic, :lessons, :user_email)"
+                "INSERT INTO syllabi (id, topic, lessons, user_email, profile) "
+                "VALUES (:id, :topic, :lessons, :user_email, :profile)"
             ),
             {
                 "id": syllabus_id, "topic": topic,
                 "lessons": json.dumps(lessons, ensure_ascii=False),
                 "user_email": user_email,
+                "profile": json.dumps(profile, ensure_ascii=False) if profile else None,
             },
         )
 
@@ -395,13 +401,14 @@ def load_syllabus(syllabus_id: str):
         return None
     with _engine.begin() as conn:
         row = conn.execute(
-            text("SELECT id, topic, lessons, user_email FROM syllabi WHERE id = :id"),
+            text("SELECT id, topic, lessons, user_email, profile FROM syllabi WHERE id = :id"),
             {"id": syllabus_id},
         ).mappings().first()
         if not row:
             return None
         syllabus = dict(row)
         syllabus["lessons"] = json.loads(syllabus["lessons"])
+        syllabus["profile"] = json.loads(syllabus["profile"]) if syllabus.get("profile") else None
         return syllabus
 
 

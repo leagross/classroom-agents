@@ -24,10 +24,12 @@ class SyllabusGenerationError(Exception):
     pass
 
 
-def generate_syllabus(topic: str, api_key: str | None = None) -> list:
+def generate_syllabus(topic: str, api_key: str | None = None, profile=None) -> list:
     """Returns a list of {"title", "summary"} dicts — the lesson outline,
     before any individual lesson's full plan exists."""
     user_content = f"נושא רחב ללימוד: {topic}"
+    if profile is not None:
+        user_content += f"\n\nפרופיל התלמיד:\n{profile.describe()}"
     last_error = None
     for _ in range(SYLLABUS_MAX_RETRIES):
         response = get_client(api_key).messages.create(
@@ -57,7 +59,7 @@ def generate_syllabus(topic: str, api_key: str | None = None) -> list:
 SYLLABI: dict[str, dict] = {}
 
 
-def create_syllabus(topic: str, lessons: list, user_email: str | None = None) -> dict:
+def create_syllabus(topic: str, lessons: list, user_email: str | None = None, profile: dict | None = None) -> dict:
     syllabus_id = str(uuid.uuid4())
     stored_lessons = [
         {
@@ -68,9 +70,12 @@ def create_syllabus(topic: str, lessons: list, user_email: str | None = None) ->
         }
         for lesson in lessons
     ]
-    syllabus = {"id": syllabus_id, "topic": topic, "lessons": stored_lessons, "user_email": user_email}
+    syllabus = {
+        "id": syllabus_id, "topic": topic, "lessons": stored_lessons,
+        "user_email": user_email, "profile": profile,
+    }
     SYLLABI[syllabus_id] = syllabus
-    db.insert_syllabus(syllabus_id, topic, stored_lessons, user_email)
+    db.insert_syllabus(syllabus_id, topic, stored_lessons, user_email, profile=profile)
     return syllabus
 
 

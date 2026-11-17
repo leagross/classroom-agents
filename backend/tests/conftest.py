@@ -11,6 +11,21 @@ import types
 
 import pytest
 
+# Import every module that holds a reference to get_client NOW, at collection
+# time, before any test has patched anything. A module first imported inside
+# a test body would otherwise do `from agent_calls import get_client` while
+# the fake is installed and keep that test's stub bound for the rest of the
+# session, so later tests would silently talk to an earlier test's fake.
+import agent_calls  # noqa: F401,E402
+import diagnostic  # noqa: F401,E402
+import flashcards  # noqa: F401,E402
+import lesson_plan  # noqa: F401,E402
+import main  # noqa: F401,E402
+import quiz  # noqa: F401,E402
+import slides  # noqa: F401,E402
+import syllabus  # noqa: F401,E402
+import domain.teacher_actions  # noqa: F401,E402
+
 
 class FakeTextBlock:
     type = "text"
@@ -91,10 +106,14 @@ def fake_anthropic(monkeypatch):
 
         original = agent_calls.get_client
         stub = lambda api_key=None: client  # noqa: E731
+        stub._is_fake_client = True
         for module in list(sys.modules.values()):
             if module is None:
                 continue
-            if getattr(module, "get_client", None) is original:
+            current = getattr(module, "get_client", None)
+            # Also re-point a stub left over from an earlier test, which
+            # would otherwise keep answering from that test's script.
+            if current is original or getattr(current, "_is_fake_client", False):
                 monkeypatch.setattr(module, "get_client", stub, raising=False)
         return client
 

@@ -1,0 +1,21 @@
+.diagnostic-modal { max-width: 560px; max-height: 86vh; overflow-y: auto; }
+.diagnostic-note { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0 0 14px; }
+.diagnostic-question { margin-bottom: 18px; }
+.diagnostic-question .q-text { font-weight: 700; margin-bottom: 8px; line-height: 1.5; }
+.diagnostic-modal .quiz-option {
+  display: block;
+  width: 100%;
+  text-align: right;
+  margin-bottom: 6px;
+  padding: 9px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+}
+.diagnostic-modal .quiz-option:hover { border-color: rgba(79, 70, 229, .4); }
+.diagnostic-modal .quiz-option.selected { border-color: var(--p1); background: rgba(79, 70, 229, .08); }
+.diagnostic-result p { font-size: 15px; line-height: 1.6; }

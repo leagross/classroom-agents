@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getAgents } from "../lib/api/session";
 import { generateLessonPlan } from "../lib/api/lessonPlan";
 import usePreviewFlow from "../hooks/usePreviewFlow";
+import { EMPTY_INTAKE, isIntakeComplete, missingHint, toProfile } from "../lib/intake";
+import IntakeFields from "./IntakeFields";
 import LessonPlanPreview from "./LessonPlanPreview";
 import "./SetupForm.css";
 
@@ -10,9 +12,10 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
   const [topic, setTopic] = useState("");
   const [selected, setSelected] = useState([]);
   const [sessionType, setSessionType] = useState("lesson"); // "lesson" | "review"
+  const [intake, setIntake] = useState(EMPTY_INTAKE);
   const { preview, setPreview, loading: loadingPlan, error, run: buildPreview, cancel } = usePreviewFlow(
     async (topicText, poolKeysArg) => {
-      const { plan, pool: resolvedPool } = await generateLessonPlan(topicText, poolKeysArg);
+      const { plan, pool: resolvedPool } = await generateLessonPlan(topicText, poolKeysArg, toProfile(topicText, intake));
       return { plan, poolKeys: resolvedPool.map((a) => a.key) };
     }
   );
@@ -36,6 +39,7 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
   async function handlePrimaryAction() {
     if (!hasApiKey) { onOpenSettings(); return; }
     if (!topic.trim()) return;
+    if (sessionType === "lesson" && !isIntakeComplete(topic, intake)) return;
 
     if (sessionType === "review") {
       onStart(topic.trim(), selected.length === 2 ? selected : null, null);
@@ -108,9 +112,21 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
         })}
       </div>
 
-      {error && <p className="setup-error">{error}</p>}
+      {sessionType === "lesson" && (
+        <IntakeFields topic={topic} value={intake} onChange={setIntake} timeLabel="כמה זמן יש לך לשיעור?" />
+      )}
 
-      <button id="startBtn" className="btn btn-primary" disabled={!hasApiKey || loadingPlan} onClick={handlePrimaryAction}>
+      {error && <p className="setup-error">{error}</p>}
+      {sessionType === "lesson" && !isIntakeComplete(topic, intake) && (
+        <p className="intake-hint">{missingHint(topic, intake)}</p>
+      )}
+
+      <button
+        id="startBtn"
+        className="btn btn-primary"
+        disabled={!hasApiKey || loadingPlan || (sessionType === "lesson" && !isIntakeComplete(topic, intake))}
+        onClick={handlePrimaryAction}
+      >
         {loadingPlan ? "בונה מערך שיעור..." : sessionType === "lesson" ? "הכן מערך שיעור" : "התחל שיעור"}
       </button>
     </div>

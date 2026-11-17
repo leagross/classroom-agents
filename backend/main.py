@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import auth
 import billing
 import db
+import diagnostic
 import flashcards
 import lesson_plan
 import orchestrator
@@ -27,6 +28,8 @@ import slack_bot
 import syllabus
 from agent_calls import TEACHER_REPLAY_DELAY, MissingApiKeyError, word_chunks
 from agents import POOL, TEACHER
+from domain.learner import InvalidProfileError, LearnerProfile
+from domain.phases.intake import IntakeFlow, IntakeState
 from services.session_repository import lesson_from_row
 
 WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")
@@ -57,15 +60,26 @@ class CreateSessionRequest(BaseModel):
 class LessonPlanRequest(BaseModel):
     topic: str
     pool_keys: list[str] | None = None
+    profile: dict | None = None  # stage 1's output; required to build a plan
 
 
 class SyllabusRequest(BaseModel):
     topic: str
+    profile: dict | None = None
 
 
 class CreateSyllabusRequest(BaseModel):
     topic: str
     lessons: list[dict]
+    profile: dict | None = None
+
+
+class DiagnosticRequest(BaseModel):
+    topic: str
+
+
+class DiagnosticGradeRequest(BaseModel):
+    answers: list  # option index per question, null where unanswered
 
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -128,6 +142,50 @@ def _validate_image(image: ImageAttachment | None):
         raise HTTPException(status_code=400, detail="הקובץ גדול מדי (מקסימום 5MB).")
 
 
+_INTAKE_MISSING = {
+    IntakeState.CHOOSING_TOPIC: "חסר נושא ללימוד.",
+    IntakeState.GATHERING_CONTEXT: "חסר מידע על התלמיד: כמה זמן יש לו, ולאיזה עומק הוא רוצה להגיע.",
+    IntakeState.DIAGNOSING_LEVEL: "חסרה רמת פתיחה — צריך לבחור רמה, או לעשות את בוחן האבחון הקצר.",
+}
+
+
+def _require_profile(topic: str, raw: dict | None) -> LearnerProfile:
+    """Stage 1 is a gate, not a suggestion: a plan or syllabus is only built
+    once intake has reached READY. The position is read by IntakeFlow (so
+    "what's still missing" has one definition), the values are validated by
+    LearnerProfile."""
+    data = {**(raw or {}), "topic": topic}
+    flow = IntakeFlow.from_partial(data)
+    if not flow.is_done():
+        raise HTTPException(status_code=422, detail=_INTAKE_MISSING[flow.state])
+    try:
+        return LearnerProfile.from_dict(data)
+    except InvalidProfileError as e:
+        raise HTTPException(status_code=422, detail=f"פרופיל התלמיד לא תקין: {e}")
+
+
+@app.post("/api/intake/diagnostic")
+def start_diagnostic(req: DiagnosticRequest, x_anthropic_key: str | None = Header(default=None)):
+    """1.3: a short quiz that places the student when they aren't sure of
+    their own level. The right answers stay on the server."""
+    if not req.topic.strip():
+        raise HTTPException(status_code=422, detail="חסר נושא ללימוד.")
+    try:
+        return diagnostic.generate_diagnostic(req.topic.strip(), api_key=x_anthropic_key)
+    except diagnostic.DiagnosticGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/intake/diagnostic/{diagnostic_id}/grade")
+def grade_diagnostic(diagnostic_id: str, req: DiagnosticGradeRequest):
+    try:
+        return diagnostic.grade_diagnostic(diagnostic_id, req.answers)
+    except diagnostic.UnknownDiagnosticError:
+        raise HTTPException(status_code=404, detail="הבוחן הזה כבר נבדק או שפג תוקפו. התחל בוחן חדש.")
+    except diagnostic.InvalidAnswersError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 @app.get("/api/agents")
 def list_agents():
     return {
@@ -146,8 +204,9 @@ def create_lesson_plan(req: LessonPlanRequest, x_anthropic_key: str | None = Hea
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    profile = _require_profile(req.topic, req.profile)
     try:
-        plan = lesson_plan.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key)
+        plan = lesson_plan.generate_lesson_plan(req.topic, pool, api_key=x_anthropic_key, profile=profile)
     except lesson_plan.LessonPlanGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"plan": plan, "pool": [{"key": a.key, "name": a.display_name, "color": a.color} for a in pool]}
@@ -226,18 +285,20 @@ def create_syllabus_preview(req: SyllabusRequest, x_anthropic_key: str | None = 
     topic into a lesson outline (title + summary each) for the user to
     approve or regenerate, before any syllabus/DB row exists. Each lesson's
     own full plan is generated separately, lazily, only once started."""
+    profile = _require_profile(req.topic, req.profile)
     try:
-        lessons = syllabus.generate_syllabus(req.topic, api_key=x_anthropic_key)
+        lessons = syllabus.generate_syllabus(req.topic, api_key=x_anthropic_key, profile=profile)
     except syllabus.SyllabusGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    return {"topic": req.topic, "lessons": lessons}
+    return {"topic": req.topic, "lessons": lessons, "profile": profile.to_dict()}
 
 
 @app.post("/api/syllabus/create")
 def create_syllabus(req: CreateSyllabusRequest, request: Request):
     user = request.session.get("user")
     user_email = user["email"] if user else None
-    syl = syllabus.create_syllabus(req.topic, req.lessons, user_email=user_email)
+    profile = _require_profile(req.topic, req.profile)
+    syl = syllabus.create_syllabus(req.topic, req.lessons, user_email=user_email, profile=profile.to_dict())
     return syl
 
 
@@ -276,7 +337,12 @@ def create_syllabus_lesson_plan(
     combined_topic = f"{syl['topic']} — {lesson['title']}"
     try:
         pool = session_state.resolve_pool(combined_topic, None)
-        plan = lesson_plan.generate_lesson_plan(combined_topic, pool, api_key=x_anthropic_key)
+        # The profile the syllabus was built for, so this lesson — generated
+        # now, possibly days after the syllabus — is written for that same
+        # student. A syllabus from before intake existed has none.
+        stored = syl.get("profile")
+        profile = LearnerProfile.from_dict({**stored, "topic": combined_topic}) if stored else None
+        plan = lesson_plan.generate_lesson_plan(combined_topic, pool, api_key=x_anthropic_key, profile=profile)
     except lesson_plan.LessonPlanGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {

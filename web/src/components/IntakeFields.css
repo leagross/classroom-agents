@@ -1,0 +1,24 @@
+.intake { margin: 6px 0 4px; }
+.intake-group { margin-bottom: 14px; }
+.intake-label { display: block; font-size: 14px; font-weight: 700; margin-bottom: 7px; color: var(--ink); }
+.intake-optional { font-weight: 400; color: var(--muted); font-size: 12px; }
+.intake-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.intake-chip {
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 18px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.intake-chip:hover:not(:disabled) { border-color: rgba(147, 51, 234, .4); }
+.intake-chip.selected { border-color: var(--p1); background: rgba(79, 70, 229, .08); color: var(--ink); }
+.intake-chip:disabled { opacity: .45; cursor: not-allowed; }
+.intake-diagnose { border-style: dashed; }
+.intake-note { margin: 8px 2px 0; font-size: 12.5px; color: var(--muted); }
+.intake-goal { width: 100%; }
+.intake-hint { font-size: 13px; color: var(--muted); margin: 4px 2px 10px; }

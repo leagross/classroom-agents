@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { generateSyllabus, createSyllabus } from "../lib/api/syllabus";
 import usePreviewFlow from "../hooks/usePreviewFlow";
+import { EMPTY_INTAKE, isIntakeComplete, missingHint, toProfile } from "../lib/intake";
+import IntakeFields from "./IntakeFields";
 import "./SetupForm.css";
 import "./SyllabusList.css";
 
@@ -13,16 +15,19 @@ import "./SyllabusList.css";
  */
 export default function SyllabusBuilder({ hasApiKey, onOpenSettings, onSyllabusReady }) {
   const [topic, setTopic] = useState("");
-  const { preview, loading, error, run, cancel, submit } = usePreviewFlow((t) => generateSyllabus(t));
+  const [intake, setIntake] = useState(EMPTY_INTAKE);
+  const { preview, loading, error, run, cancel, submit } = usePreviewFlow((t) =>
+    generateSyllabus(t, toProfile(t, intake))
+  );
 
   async function buildPreview() {
     if (!hasApiKey) { onOpenSettings(); return; }
-    if (!topic.trim()) return;
+    if (!isIntakeComplete(topic, intake)) return;
     await run(topic.trim());
   }
 
   async function approve() {
-    const syllabus = await submit(() => createSyllabus(preview.topic, preview.lessons));
+    const syllabus = await submit(() => createSyllabus(preview.topic, preview.lessons, preview.profile));
     if (syllabus) onSyllabusReady(syllabus);
   }
 
@@ -66,9 +71,21 @@ export default function SyllabusBuilder({ hasApiKey, onOpenSettings, onSyllabusR
         onChange={(e) => setTopic(e.target.value)}
       />
 
-      {error && <p className="setup-error">{error}</p>}
+      <IntakeFields
+        topic={topic}
+        value={intake}
+        onChange={setIntake}
+        timeLabel="כמה זמן אתה יכול להקדיש לכל שיעור?"
+      />
 
-      <button className="btn btn-primary" disabled={!hasApiKey || loading} onClick={buildPreview}>
+      {error && <p className="setup-error">{error}</p>}
+      {!isIntakeComplete(topic, intake) && <p className="intake-hint">{missingHint(topic, intake)}</p>}
+
+      <button
+        className="btn btn-primary"
+        disabled={!hasApiKey || loading || !isIntakeComplete(topic, intake)}
+        onClick={buildPreview}
+      >
         {loading ? "בונה סילבוס..." : "הצע סילבוס"}
       </button>
     </div>

@@ -2,9 +2,11 @@ import { API_BASE, authHeaders, streamSSE } from "./client";
 
 /**
  * Generates a lesson plan preview — no session/DB row is created yet.
+ * `profile` is stage 1's output (time, depth, level, goal); the server
+ * refuses to build a plan without a complete one.
  */
-export async function generateLessonPlan(topic, poolKeys) {
-  const body = { topic };
+export async function generateLessonPlan(topic, poolKeys, profile) {
+  const body = { topic, profile };
   if (poolKeys && poolKeys.length === 2) body.pool_keys = poolKeys;
   const res = await fetch(API_BASE + "/api/lesson-plan", {
     method: "POST",
