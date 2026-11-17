@@ -220,3 +220,33 @@ class TestReviewSession:
         assert not any(e.get("type") == "error" for e in events)
         assert session.lesson.activity_index == 0
         assert events[-1]["awaiting_user"] is True
+
+
+class TestPlanPresentationFlag:
+    """generate_lesson_plan must never let a malformed flag turn slides on."""
+
+    def _plan_json(self, presentation_literal):
+        return (
+            '{"goals":["g"],"activities":[{"stage":"opening","title":"t","summary":"s",'
+            '"autonomous_exchanges":1,"checkpoint_question":"q"}],"homework":"h",'
+            f'"presentation":{presentation_literal}}}'
+        )
+
+    def test_true_boolean_is_kept(self, fake_anthropic):
+        import lesson_plan
+
+        fake_anthropic([(lambda s, p: True, self._plan_json("true"))])
+        assert lesson_plan.generate_lesson_plan("נושא", [], api_key="k")["presentation"] is True
+
+    def test_missing_flag_defaults_to_no_slides(self, fake_anthropic):
+        import lesson_plan
+
+        raw = self._plan_json("true").replace(',"presentation":true', "")
+        fake_anthropic([(lambda s, p: True, raw)])
+        assert lesson_plan.generate_lesson_plan("נושא", [], api_key="k")["presentation"] is False
+
+    def test_a_stringly_typed_flag_does_not_count(self, fake_anthropic):
+        import lesson_plan
+
+        fake_anthropic([(lambda s, p: True, self._plan_json('"true"'))])
+        assert lesson_plan.generate_lesson_plan("נושא", [], api_key="k")["presentation"] is False

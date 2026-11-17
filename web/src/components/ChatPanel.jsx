@@ -61,7 +61,6 @@ export default function ChatPanel({
   const fileInputRef = useRef(null);
   const streamingElRef = useRef(null);
   const board = useLessonBoard({ sessionId });
-  const [boardView, setBoardView] = useState("notes");
   const tts = useTextToSpeech();
 
   const { messages, streaming, waiting, teacherMode, reset, sent, run: runStream } = useClassroomStream({
@@ -149,7 +148,8 @@ export default function ChatPanel({
   const slides = useLessonSlides({
     sessionId,
     activityIndex: currentActivity ? activityIndex : null,
-    enabled: Boolean(plan),
+    // Only a lesson whose plan calls for a presentation ever asks for slides.
+    enabled: Boolean(plan?.presentation),
   });
 
   function handleExportSummary() {
@@ -167,8 +167,7 @@ export default function ChatPanel({
       focused={focus === "board"}
       onToggleFocus={() => setFocus((f) => (f === "board" ? "chat" : "board"))}
       statusLabel={teacherMode ? MODE_LABELS[teacherMode] : null}
-      view={boardView}
-      onChangeView={setBoardView}
+      presentation={Boolean(plan?.presentation)}
       slides={slides}
     />
   ) : null;

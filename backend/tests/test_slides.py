@@ -71,3 +71,57 @@ class TestProviderSeam:
         deck = slides_module.build_slides("נושא", ACTIVITY)
         assert deck[0]["title"] == "מה זה נגזרת"
         assert "image_url" not in deck[0]
+
+
+class TestWhetherALessonHasSlides:
+    """The lesson's type decides whether anything is projected; the teacher
+    writes on the board either way."""
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        import main
+
+        return TestClient(main.app)
+
+    def _session(self, presentation):
+        import session_state
+
+        plan = {
+            "goals": ["g"],
+            "activities": [{"stage": "teaching", "title": "נגזרות", "summary": "s",
+                            "autonomous_exchanges": 0, "checkpoint_question": "q"}],
+            "homework": "",
+            "presentation": presentation,
+        }
+        return session_state.create_session("נושא", pool_keys=["dani", "deep_diver"], plan=plan)
+
+    def test_a_lesson_without_a_presentation_cannot_spend_a_deck(self, fake_anthropic):
+        client_fake = fake_anthropic([(lambda s, p: True, GOOD_JSON)])
+        session = self._session(presentation=False)
+        res = self._client().get(
+            f"/api/session/{session.id}/slides/0", headers={"X-Anthropic-Key": "sk-test"}
+        )
+        assert res.status_code == 404
+        assert client_fake.messages.calls == []  # no model call was made
+
+    def test_a_lesson_with_a_presentation_gets_its_deck_once(self, fake_anthropic):
+        client_fake = fake_anthropic([(lambda s, p: True, GOOD_JSON)])
+        session = self._session(presentation=True)
+        http = self._client()
+        headers = {"X-Anthropic-Key": "sk-test"}
+
+        first = http.get(f"/api/session/{session.id}/slides/0", headers=headers)
+        second = http.get(f"/api/session/{session.id}/slides/0", headers=headers)
+
+        assert first.status_code == 200 and first.json()["cached"] is False
+        assert second.json()["cached"] is True
+        assert len(client_fake.messages.calls) == 1  # the second request was served from cache
+
+    def test_an_out_of_range_activity_is_a_404(self, fake_anthropic):
+        fake_anthropic([(lambda s, p: True, GOOD_JSON)])
+        session = self._session(presentation=True)
+        res = self._client().get(
+            f"/api/session/{session.id}/slides/9", headers={"X-Anthropic-Key": "sk-test"}
+        )
+        assert res.status_code == 404

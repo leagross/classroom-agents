@@ -10,7 +10,7 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
   const [topic, setTopic] = useState("");
   const [selected, setSelected] = useState([]);
   const [sessionType, setSessionType] = useState("lesson"); // "lesson" | "review"
-  const { preview, loading: loadingPlan, error, run: buildPreview, cancel } = usePreviewFlow(
+  const { preview, setPreview, loading: loadingPlan, error, run: buildPreview, cancel } = usePreviewFlow(
     async (topicText, poolKeysArg) => {
       const { plan, pool: resolvedPool } = await generateLessonPlan(topicText, poolKeysArg);
       return { plan, poolKeys: resolvedPool.map((a) => a.key) };
@@ -54,6 +54,7 @@ export default function SetupForm({ hasApiKey, onOpenSettings, onStart }) {
         onStart={() => onStart(topic.trim(), preview.poolKeys, preview.plan)}
         onRegenerate={() => buildPreview(topic.trim(), selected.length === 2 ? selected : null)}
         onCancel={cancel}
+        onTogglePresentation={(on) => setPreview((p) => ({ ...p, plan: { ...p.plan, presentation: on } }))}
       />
     );
   }

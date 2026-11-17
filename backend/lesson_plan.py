@@ -69,6 +69,12 @@ def generate_lesson_plan(topic: str, pool: list, api_key: str | None = None) -> 
             # mechanics — default it instead of spending a retry over it.
             if not isinstance(plan.get("homework"), str):
                 plan["homework"] = ""
+            # Whether this kind of lesson projects slides at all. A model
+            # that omits it, or returns anything but a real boolean ("true"
+            # the string, 1), gets no presentation: slides cost a model
+            # call per activity, so the safe default is to not spend it.
+            if not isinstance(plan.get("presentation"), bool):
+                plan["presentation"] = False
             return plan
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
             last_error = e

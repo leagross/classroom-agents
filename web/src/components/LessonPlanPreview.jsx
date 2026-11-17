@@ -2,7 +2,9 @@ import { stageLabel } from "../lib/lessonStages";
 import { downloadLessonPlan } from "../lib/export/markdown";
 import "./LessonPlanPreview.css";
 
-export default function LessonPlanPreview({ topic, plan, onStart, onRegenerate, onCancel, regenerating }) {
+export default function LessonPlanPreview({
+  topic, plan, onStart, onRegenerate, onCancel, regenerating, onTogglePresentation,
+}) {
   return (
     <div className="lesson-plan-preview">
       <h2>מערך השיעור</h2>
@@ -35,6 +37,25 @@ export default function LessonPlanPreview({ topic, plan, onStart, onRegenerate, 
           <h4>שיעורי בית</h4>
           <p className="plan-homework">{plan.homework}</p>
         </>
+      )}
+
+      {onTogglePresentation && (
+        <label className="plan-presentation">
+          <input
+            type="checkbox"
+            checked={Boolean(plan.presentation)}
+            onChange={(e) => onTogglePresentation(e.target.checked)}
+          />
+          <span>
+            <b>הקרנת מצגת בשיעור</b>
+            <small>
+              {plan.presentation
+                ? "המורה יציג שקופיות על הלוח, ויכתוב לידן."
+                : "המורה ילמד בכתיבה על הלוח בלבד."}{" "}
+              הוצע אוטומטית לפי סוג השיעור — אפשר לשנות.
+            </small>
+          </span>
+        </label>
       )}
 
       <div className="plan-actions">

@@ -28,3 +28,18 @@
 
 .plan-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .plan-actions .btn { flex: 1; min-width: 120px; }
+
+.plan-presentation {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.plan-presentation input { margin-top: 4px; flex-shrink: 0; }
+.plan-presentation b { display: block; font-size: 14px; }
+.plan-presentation small { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); line-height: 1.5; }

@@ -434,6 +434,12 @@ def get_activity_slides(
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found")
 
+    # Whether a lesson projects slides is decided when its plan is approved
+    # (plan["presentation"]), by the kind of lesson it is. A lesson that
+    # doesn't use them must not be able to spend a model call on a deck.
+    if not (session.lesson.plan or {}).get("presentation"):
+        raise HTTPException(status_code=404, detail="this lesson has no presentation")
+
     activities = session.lesson.activities
     if not (0 <= activity_index < len(activities)):
         raise HTTPException(status_code=404, detail="activity index out of range")

@@ -66,6 +66,7 @@ export default function SyllabusView({ syllabus, onBack, onSessionStart }) {
         onStart={confirmStart}
         onRegenerate={() => startLesson(activeIndex)}
         onCancel={() => { setPreview(null); setActiveIndex(null); }}
+        onTogglePresentation={(on) => setPreview((p) => ({ ...p, plan: { ...p.plan, presentation: on } }))}
       />
     );
   }
